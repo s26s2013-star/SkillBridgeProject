@@ -14,21 +14,26 @@ export const authService = {
             const data = await response.json();
 
             if (!response.ok) {
-                throw new Error(data.message || 'Invalid credentials or server error.');
+                // Return clear error message from API if available
+                throw new Error(data.message || 'Login failed. Please check your credentials.');
             }
 
-            // Extract token and user info assuming a standard JWT payload response
+            // Success: Store token and user data in localStorage
             if (data.token) {
                 localStorage.setItem('token', data.token);
-                if (data.user) {
-                    localStorage.setItem('user', JSON.stringify(data.user));
-                }
             }
+
+            if (data.user) {
+                localStorage.setItem('user', JSON.stringify(data.user));
+            }
+
             return data;
         } catch (error) {
+            console.error('Login error:', error);
             throw error;
         }
     },
+
 
     async register(name, email, password, role) {
         try {

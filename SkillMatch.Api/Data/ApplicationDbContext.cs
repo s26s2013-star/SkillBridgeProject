@@ -10,6 +10,7 @@ namespace SkillMatch.Api.Data
         public DbSet<User> Users { get; set; }
         public DbSet<Skill> Skills { get; set; }
         public DbSet<Job> Jobs { get; set; }
+        public DbSet<UserSkill> UserSkills { get; set; }
         public DbSet<SkillAssessment> SkillAssessments { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
