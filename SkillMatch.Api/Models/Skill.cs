@@ -11,8 +11,11 @@ namespace SkillMatch.Api.Models
         [MaxLength(100)]
         public string Name { get; set; } = string.Empty;
 
+        [Required]
+        [MaxLength(100)]
+        public string Category { get; set; } = string.Empty;
+
         // Navigation properties
         public ICollection<SkillAssessment> SkillAssessments { get; set; } = new List<SkillAssessment>();
-        public ICollection<UserSkill> UserSkills { get; set; } = new List<UserSkill>();
     }
 }

@@ -20,10 +20,9 @@ namespace SkillMatch.Api.Models
 
         [Required]
         [MaxLength(50)]
-        public string Role { get; set; } = "Student";
+        public string Role { get; set; } = string.Empty; // Student, Employer, Admin
 
         // Navigation properties
         public ICollection<SkillAssessment> SkillAssessments { get; set; } = new List<SkillAssessment>();
-        public ICollection<UserSkill> UserSkills { get; set; } = new List<UserSkill>();
     }
 }

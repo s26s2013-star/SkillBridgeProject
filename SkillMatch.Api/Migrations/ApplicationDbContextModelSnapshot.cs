@@ -60,6 +60,11 @@ namespace SkillMatch.Api.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -141,32 +146,6 @@ namespace SkillMatch.Api.Migrations
                     b.ToTable("Users");
                 });
 
-            modelBuilder.Entity("SkillMatch.Api.Models.UserSkill", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("Level")
-                        .HasColumnType("int");
-
-                    b.Property<int>("SkillId")
-                        .HasColumnType("int");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SkillId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("UserSkill");
-                });
-
             modelBuilder.Entity("SkillMatch.Api.Models.SkillAssessment", b =>
                 {
                     b.HasOne("SkillMatch.Api.Models.Skill", "Skill")
@@ -186,37 +165,14 @@ namespace SkillMatch.Api.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("SkillMatch.Api.Models.UserSkill", b =>
-                {
-                    b.HasOne("SkillMatch.Api.Models.Skill", "Skill")
-                        .WithMany("UserSkills")
-                        .HasForeignKey("SkillId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("SkillMatch.Api.Models.User", "User")
-                        .WithMany("UserSkills")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Skill");
-
-                    b.Navigation("User");
-                });
-
             modelBuilder.Entity("SkillMatch.Api.Models.Skill", b =>
                 {
                     b.Navigation("SkillAssessments");
-
-                    b.Navigation("UserSkills");
                 });
 
             modelBuilder.Entity("SkillMatch.Api.Models.User", b =>
                 {
                     b.Navigation("SkillAssessments");
-
-                    b.Navigation("UserSkills");
                 });
 #pragma warning restore 612, 618
         }
