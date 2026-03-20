@@ -2,32 +2,39 @@ import { endpoints } from '../config/api';
 
 export const authService = {
     async login(email, password) {
-        try {
-            const response = await fetch(endpoints.auth.login, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ email, password })
-            });
+        const response = await fetch(endpoints.auth.login, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                email: email.trim().toLowerCase(),
+                password: password.trim(),
+            }),
+        });
 
-            const data = await response.json();
+        let data = null;
+        const contentType = response.headers.get('content-type');
 
-            if (!response.ok) {
-                throw new Error(data.message || 'Invalid credentials or server error.');
-            }
-
-            // Extract token and user info assuming a standard JWT payload response
-            if (data.token) {
-                localStorage.setItem('token', data.token);
-                if (data.user) {
-                    localStorage.setItem('user', JSON.stringify(data.user));
-                }
-            }
-            return data;
-        } catch (error) {
-            throw error;
+        if (contentType && contentType.includes('application/json')) {
+            data = await response.json();
         }
+
+        if (!response.ok) {
+            throw new Error(data?.message || 'Invalid email or password.');
+        }
+
+        if (!data?.token) {
+            throw new Error('Login failed. Token was not returned from server.');
+        }
+
+        localStorage.setItem('token', data.token);
+
+        if (data.user) {
+            localStorage.setItem('user', JSON.stringify(data.user));
+        }
+
+        return data;
     },
 
     async register(name, email, password, role, major) {
@@ -47,14 +54,11 @@ export const authService = {
                 data = await response.json();
             }
 
-            if (!response.ok) {
-                throw new Error(data?.message || 'Registration failed. Email might already be in use.');
-            }
-
-            return data || { success: true };
-        } catch (error) {
-            throw error;
+        if (!response.ok) {
+            throw new Error(data?.message || 'Registration failed.');
         }
+
+        return data || { success: true };
     },
 
     logout() {
@@ -63,16 +67,19 @@ export const authService = {
     },
 
     isAuthenticated() {
-        return !!localStorage.getItem('token');
+        const token = localStorage.getItem('token');
+        return !!token;
     },
 
     getCurrentUser() {
         const userStr = localStorage.getItem('user');
         if (!userStr) return null;
+
         try {
             return JSON.parse(userStr);
         } catch {
+            localStorage.removeItem('user');
             return null;
         }
-    }
+    },
 };
