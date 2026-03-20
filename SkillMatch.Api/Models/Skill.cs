@@ -1,11 +1,13 @@
 using System.ComponentModel.DataAnnotations;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace SkillMatch.Api.Models
 {
     public class Skill
     {
-        [Key]
-        public int Id { get; set; }
+        [BsonId]
+        public ObjectId Id { get; set; }
 
         [Required]
         [MaxLength(100)]
@@ -14,8 +16,5 @@ namespace SkillMatch.Api.Models
         [Required]
         [MaxLength(100)]
         public string Category { get; set; } = string.Empty;
-
-        // Navigation properties
-        public ICollection<SkillAssessment> SkillAssessments { get; set; } = new List<SkillAssessment>();
     }
 }

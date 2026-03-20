@@ -11,6 +11,7 @@ export const Register = () => {
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [role, setRole] = useState('student');
+    const [major, setMajor] = useState('');
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [loading, setLoading] = useState(false);
@@ -32,7 +33,7 @@ export const Register = () => {
 
         setLoading(true);
         try {
-            await authService.register(name, email, password, role);
+            await authService.register(name, email, password, role, major);
             setSuccess('Registration successful! Redirecting to login...');
             setTimeout(() => {
                 navigate('/login');
@@ -75,6 +76,15 @@ export const Register = () => {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    disabled={loading}
+                />
+
+                <Input
+                    label="Major / Field of Study"
+                    type="text"
+                    placeholder="e.g. Computer Science"
+                    value={major}
+                    onChange={(e) => setMajor(e.target.value)}
                     disabled={loading}
                 />
 

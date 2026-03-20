@@ -1,7 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
-import { mockUser } from '../data/mockDashboardData';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 
 export const Assessment = () => {

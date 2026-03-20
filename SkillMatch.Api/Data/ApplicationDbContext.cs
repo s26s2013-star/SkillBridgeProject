@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using MongoDB.EntityFrameworkCore;
 using SkillMatch.Api.Models;
 
 namespace SkillMatch.Api.Data
@@ -11,31 +12,21 @@ namespace SkillMatch.Api.Data
         public DbSet<Skill> Skills { get; set; }
         public DbSet<Job> Jobs { get; set; }
         public DbSet<SkillAssessment> SkillAssessments { get; set; }
+        public DbSet<UserSoftSkill> UserSoftSkills { get; set; }
+        public DbSet<SkillVerificationQuestion> SkillVerificationQuestions { get; set; }
+        public DbSet<UserSkillVerification> UserSkillVerifications { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
 
-            // User configuration
-            modelBuilder.Entity<User>()
-                .HasIndex(u => u.Email)
-                .IsUnique();
-
-            // Skill configuration
-            modelBuilder.Entity<Skill>()
-                .HasIndex(s => s.Name)
-                .IsUnique();
-
-            // SkillAssessment configuration
-            modelBuilder.Entity<SkillAssessment>()
-                .HasOne(sa => sa.User)
-                .WithMany(u => u.SkillAssessments)
-                .HasForeignKey(sa => sa.UserId);
-
-            modelBuilder.Entity<SkillAssessment>()
-                .HasOne(sa => sa.Skill)
-                .WithMany(s => s.SkillAssessments)
-                .HasForeignKey(sa => sa.SkillId);
+            modelBuilder.Entity<User>().ToCollection("users");
+            modelBuilder.Entity<Skill>().ToCollection("skills");
+            modelBuilder.Entity<Job>().ToCollection("jobs");
+            modelBuilder.Entity<SkillAssessment>().ToCollection("skill_assessments");
+            modelBuilder.Entity<UserSoftSkill>().ToCollection("user_soft_skills");
+            modelBuilder.Entity<SkillVerificationQuestion>().ToCollection("skill_verification_questions");
+            modelBuilder.Entity<UserSkillVerification>().ToCollection("user_skill_verifications");
         }
     }
 }

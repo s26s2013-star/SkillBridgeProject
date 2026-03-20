@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Trash2, Plus, CheckCircle2, Clock, Info, Search } from 'lucide-react';
 import { authService } from '../services/authService';
-import { mockUser } from '../data/mockDashboardData';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
@@ -12,7 +11,31 @@ export const Skills = () => {
     const user = authService.getCurrentUser() || mockUser;
 
     // Local state for demonstration
-    const [skills, setSkills] = useState(mockUser.topSkills);
+    const [skills, setSkills] = useState([]);
+
+    useEffect(() => {
+        const fetchSkills = async () => {
+            try {
+                const response = await fetch('http://localhost:8000/api/skills');
+                if (response.ok) {
+                    const data = await response.json();
+                    const formattedSkills = data.map((apiSkill, index) => ({
+                        name: apiSkill.skill_name,
+                        progress: index % 3 === 0 ? 80 : index % 3 === 1 ? 50 : 30,
+                        status: index % 3 === 0 ? 'Verified' : index % 3 === 1 ? 'Pending' : 'Not tested',
+                        level: index % 3 === 0 ? 'Advanced' : index % 3 === 1 ? 'Intermediate' : 'Beginner',
+                        _id: apiSkill._id,
+                        category: apiSkill.category
+                    }));
+                    setSkills(formattedSkills);
+                }
+            } catch (error) {
+                console.error("Failed to fetch skills from Python backend:", error);
+                setSkills(mockUser.topSkills);
+            }
+        };
+        fetchSkills();
+    }, []);
     const [newSkill, setNewSkill] = useState('');
     const [newLevel, setNewLevel] = useState('Beginner');
     const [showAddForm, setShowAddForm] = useState(false);

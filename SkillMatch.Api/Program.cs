@@ -1,7 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using SkillMatch.Api.Data;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Register encoding provider for Latin-1 support in CsvHelper
+Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 // منع مشكلة EventLog
 builder.Logging.ClearProviders();
@@ -11,8 +15,11 @@ builder.Logging.AddConsole();
 builder.Services.AddControllers();
 
 // Database Context
+var mongoConnectionString = Environment.GetEnvironmentVariable("MONGODB_URI") 
+    ?? builder.Configuration.GetConnectionString("MongoDbConnection");
+
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseMongoDB(mongoConnectionString ?? "", "ProjectApp"));
 
 // Swagger / OpenAPI
 builder.Services.AddOpenApi();

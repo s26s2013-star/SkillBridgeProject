@@ -1,17 +1,16 @@
 using System.ComponentModel.DataAnnotations;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace SkillMatch.Api.Models
 {
     public class SkillAssessment
     {
-        [Key]
-        public int Id { get; set; }
+        [BsonId]
+        public ObjectId Id { get; set; }
 
-        public int UserId { get; set; }
-        public User User { get; set; } = null!;
-
-        public int SkillId { get; set; }
-        public Skill Skill { get; set; } = null!;
+        public ObjectId UserId { get; set; }
+        public ObjectId SkillId { get; set; }
 
         public decimal Score { get; set; }
 
