@@ -5,7 +5,7 @@ import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 
 export const Matches = () => {
     const navigate = useNavigate();
-    const user = authService.getCurrentUser() || mockUser;
+    const user = authService.getCurrentUser() || {};
 
     const handleLogout = () => {
         authService.logout();

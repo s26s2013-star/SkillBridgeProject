@@ -8,61 +8,180 @@ import { Input } from '../components/Input';
 
 export const Skills = () => {
     const navigate = useNavigate();
-    const user = authService.getCurrentUser() || mockUser;
+    const user = authService.getCurrentUser() || {};
 
-    // Local state for demonstration
+    // Local state for skills
     const [skills, setSkills] = useState([]);
-
-    useEffect(() => {
-        const fetchSkills = async () => {
-            try {
-                const response = await fetch('http://localhost:8000/api/skills');
-                if (response.ok) {
-                    const data = await response.json();
-                    const formattedSkills = data.map((apiSkill, index) => ({
-                        name: apiSkill.skill_name,
-                        progress: index % 3 === 0 ? 80 : index % 3 === 1 ? 50 : 30,
-                        status: index % 3 === 0 ? 'Verified' : index % 3 === 1 ? 'Pending' : 'Not tested',
-                        level: index % 3 === 0 ? 'Advanced' : index % 3 === 1 ? 'Intermediate' : 'Beginner',
-                        _id: apiSkill._id,
-                        category: apiSkill.category
-                    }));
-                    setSkills(formattedSkills);
-                }
-            } catch (error) {
-                console.error("Failed to fetch skills from Python backend:", error);
-                setSkills(mockUser.topSkills);
-            }
-        };
-        fetchSkills();
-    }, []);
-    const [newSkill, setNewSkill] = useState('');
+    const [dbSkillsList, setDbSkillsList] = useState([]);
+    const [checkedSkills, setCheckedSkills] = useState([]);
+    const [selectedMajor, setSelectedMajor] = useState(user.major || 'Information System');
     const [newLevel, setNewLevel] = useState('Beginner');
     const [showAddForm, setShowAddForm] = useState(false);
+
+    useEffect(() => {
+        if (!user || !user.email) return;
+
+        const loadData = async () => {
+            try {
+                // Fetch all system skills to grab category metadata
+                const skillsRes = await fetch('http://127.0.0.1:8000/api/skills');
+                const allDbSkills = skillsRes.ok ? await skillsRes.json() : [];
+                setDbSkillsList(allDbSkills);
+
+                // Fetch current user's personalized profile details
+                const profileRes = await fetch(`http://127.0.0.1:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+                let userSkillNames = [];
+                if (profileRes.ok) {
+                    const profileData = await profileRes.json();
+                    userSkillNames = profileData.skills || [];
+                }
+
+                // Match user's tracked skills against the system database
+                const formattedUserSkills = userSkillNames.map((skillObj, index) => {
+                    const skillName = typeof skillObj === 'string' ? skillObj : skillObj.name;
+                    const dbSkill = allDbSkills.find(s => s.skill_name.toLowerCase() === skillName.toLowerCase());
+                    const level = typeof skillObj === 'string' ? (index % 3 === 0 ? 'Advanced' : index % 3 === 1 ? 'Intermediate' : 'Beginner') : skillObj.level;
+                    const progress = typeof skillObj === 'string' ? (index % 3 === 0 ? 80 : index % 3 === 1 ? 50 : 30) : skillObj.progress;
+                    const status = typeof skillObj === 'string' ? 'Not tested' : skillObj.status;
+                    
+                    let desc = (typeof skillObj === 'object' && skillObj.description) ? skillObj.description : 'Custom skill manually added to profile.';
+                    if ((!skillObj.description) && dbSkill) {
+                        if (level === 'Advanced') desc = dbSkill.advanced_criteria;
+                        else if (level === 'Intermediate') desc = dbSkill.intermediate_criteria;
+                        else desc = dbSkill.beginner_criteria;
+                    }
+                    
+                    let components = (typeof skillObj === 'object' && skillObj.components) ? skillObj.components : [];
+                    if ((!components || components.length === 0) && dbSkill && dbSkill.key_components) {
+                        components = dbSkill.key_components;
+                    }
+
+                    return {
+                        name: skillName,
+                        progress: progress,
+                        status: status,
+                        level: level,
+                        category: (typeof skillObj === 'object' && skillObj.category) ? skillObj.category : (dbSkill ? dbSkill.category : 'Custom'),
+                        description: desc,
+                        components: components
+                    };
+                });
+                
+                setSkills(formattedUserSkills);
+            } catch (error) {
+                console.error("Failed to load skills:", error);
+            }
+        };
+        loadData();
+    }, [user?.email]);
+
+    const saveSkillsToProfile = async (updatedSkillNames) => {
+        if (!user || !user.email) return;
+        try {
+            // Grab the freshest profile first so we don't wipe out other fields
+            const res = await fetch(`http://localhost:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+            if (!res.ok) throw new Error("Could not fetch profile");
+            const profileData = await res.json();
+            
+            // Assign the new skills list
+            profileData.skills = updatedSkillNames;
+            
+            await fetch('http://127.0.0.1:8000/api/user/profile', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(profileData)
+            });
+        } catch (error) {
+            console.error("Failed to save skills:", error);
+            alert("Database Error: We couldn't find your profile in the system. It's possible your account was deleted. Please Log Out and Register a new account to save your skills permanently!");
+        }
+    };
 
     const handleLogout = () => {
         authService.logout();
         navigate('/login');
     };
 
-    const handleAddSkill = (e) => {
+    const handleAddSkill = async (e) => {
         e.preventDefault();
-        if (!newSkill.trim()) return;
+        if (checkedSkills.length === 0) {
+            setShowAddForm(false);
+            return;
+        }
 
-        const skillToAdd = {
-            name: newSkill,
-            progress: newLevel === 'Beginner' ? 30 : newLevel === 'Intermediate' ? 60 : 90,
-            status: 'Not tested',
-            level: newLevel
-        };
+        let newSkillsList = [...skills];
+        let changed = false;
 
-        setSkills([skillToAdd, ...skills]);
-        setNewSkill('');
-        setShowAddForm(false);
+        checkedSkills.forEach(skillName => {
+            // Prevent duplicates
+            if (newSkillsList.some(s => s.name.toLowerCase() === skillName.toLowerCase())) {
+                return;
+            }
+
+            const dbSkill = dbSkillsList.find(s => s.skill_name.toLowerCase() === skillName.toLowerCase());
+            let desc = 'Custom skill manually added to profile.';
+            if (dbSkill) {
+                if (newLevel === 'Advanced') desc = dbSkill.advanced_criteria;
+                else if (newLevel === 'Intermediate') desc = dbSkill.intermediate_criteria;
+                else desc = dbSkill.beginner_criteria;
+            }
+
+            const skillToAdd = {
+                name: dbSkill ? dbSkill.skill_name : skillName,
+                progress: newLevel === 'Beginner' ? 30 : newLevel === 'Intermediate' ? 60 : 90,
+                status: 'Not tested',
+                level: newLevel,
+                category: dbSkill ? dbSkill.category : 'Custom',
+                description: desc,
+                components: dbSkill && dbSkill.key_components ? dbSkill.key_components : []
+            };
+            newSkillsList = [skillToAdd, ...newSkillsList];
+            changed = true;
+        });
+
+        if (changed) {
+            setSkills(newSkillsList);
+            setCheckedSkills([]);
+            setShowAddForm(false);
+            
+            // Persist addition to backend
+            await saveSkillsToProfile(newSkillsList.map(s => ({
+                name: s.name, level: s.level, progress: s.progress, status: s.status,
+                description: s.description, components: s.components, category: s.category
+            })));
+        } else {
+            setCheckedSkills([]);
+            setShowAddForm(false);
+        }
     };
 
-    const handleRemoveSkill = (name) => {
-        setSkills(skills.filter(s => s.name !== name));
+    const handleCheckboxChange = (skillName, isChecked) => {
+        if (isChecked) {
+            setCheckedSkills(prev => [...prev, skillName]);
+        } else {
+            setCheckedSkills(prev => prev.filter(name => name !== skillName));
+        }
+    };
+
+    // Group available skills dynamically by major
+    const skillsByMajor = dbSkillsList.reduce((acc, skill) => {
+        const majorKey = skill.major || 'Other';
+        if (!acc[majorKey]) acc[majorKey] = [];
+        acc[majorKey].push(skill);
+        return acc;
+    }, {});
+    const availableMajors = Object.keys(skillsByMajor);
+    const currentMajor = availableMajors.includes(selectedMajor) ? selectedMajor : (availableMajors[0] || 'Software Engineering');
+
+    const handleRemoveSkill = async (name) => {
+        const newSkillsList = skills.filter(s => s.name !== name);
+        setSkills(newSkillsList);
+        
+        // Persist removal to backend
+        await saveSkillsToProfile(newSkillsList.map(s => ({
+            name: s.name, level: s.level, progress: s.progress, status: s.status,
+            description: s.description, components: s.components, category: s.category
+        })));
     };
 
     const getStatusIcon = (status) => {
@@ -104,27 +223,62 @@ export const Skills = () => {
                     </div>
 
                     {showAddForm && (
-                        <form onSubmit={handleAddSkill} className="add-skill-form animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '1rem', alignItems: 'end', backgroundColor: 'var(--color-bg)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
-                            <Input
-                                label="Skill Name"
-                                placeholder="e.g. React, Python, UI Design"
-                                value={newSkill}
-                                onChange={(e) => setNewSkill(e.target.value)}
-                                style={{ marginBottom: 0 }}
-                            />
-                            <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                <label style={{ fontSize: '0.875rem', fontWeight: '500' }}>Skill Level</label>
-                                <select
-                                    value={newLevel}
-                                    onChange={(e) => setNewLevel(e.target.value)}
-                                    style={{ padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', outline: 'none' }}
-                                >
-                                    <option value="Beginner">Beginner</option>
-                                    <option value="Intermediate">Intermediate</option>
-                                    <option value="Advanced">Advanced</option>
-                                </select>
+                        <form onSubmit={handleAddSkill} className="add-skill-form animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', backgroundColor: 'var(--color-bg)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                    <label style={{ fontSize: '0.875rem', fontWeight: '500' }}>IT Specialization</label>
+                                    <select
+                                        value={currentMajor}
+                                        onChange={(e) => setSelectedMajor(e.target.value)}
+                                        style={{ padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', outline: 'none', backgroundColor: 'var(--color-input-bg)' }}
+                                    >
+                                        {availableMajors.map(major => (
+                                            <option key={major} value={major}>{major}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                    <label style={{ fontSize: '0.875rem', fontWeight: '500' }}>Target Proficiency Level</label>
+                                    <select
+                                        value={newLevel}
+                                        onChange={(e) => setNewLevel(e.target.value)}
+                                        style={{ padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', outline: 'none', backgroundColor: 'var(--color-input-bg)' }}
+                                    >
+                                        <option value="Beginner">Beginner (30%)</option>
+                                        <option value="Intermediate">Intermediate (60%)</option>
+                                        <option value="Advanced">Advanced (90%)</option>
+                                    </select>
+                                </div>
                             </div>
-                            <Button type="submit" style={{ height: '48px' }}>Add Component</Button>
+                            
+                            <div>
+                                <label style={{ fontSize: '0.875rem', fontWeight: '600', marginBottom: '0.75rem', display: 'block' }}>Select Skills to Add</label>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.85rem', background: 'var(--color-white)', padding: '1.25rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}>
+                                    {skillsByMajor[currentMajor]?.map(skill => {
+                                        const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === skill.skill_name.toLowerCase());
+                                        const isChecked = checkedSkills.includes(skill.skill_name);
+                                        return (
+                                            <label key={skill.skill_name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: isAlreadyOwned ? 'not-allowed' : 'pointer', opacity: isAlreadyOwned ? 0.5 : 1 }}>
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={isAlreadyOwned ? true : isChecked}
+                                                    disabled={isAlreadyOwned}
+                                                    onChange={(e) => handleCheckboxChange(skill.skill_name, e.target.checked)}
+                                                    style={{ width: '1.25rem', height: '1.25rem', accentColor: 'var(--color-primary)', flexShrink: 0 }}
+                                                />
+                                                <span style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--color-text)' }}>{skill.skill_name}</span>
+                                            </label>
+                                        );
+                                    })}
+                                    {(!skillsByMajor[currentMajor] || skillsByMajor[currentMajor].length === 0) && (
+                                        <span style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>No skills found for this specialization.</span>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            <Button type="submit" disabled={checkedSkills.length === 0} style={{ alignSelf: 'flex-end', minWidth: '200px', opacity: checkedSkills.length === 0 ? 0.5 : 1 }}>
+                                Add {checkedSkills.length > 0 ? checkedSkills.length : ''} Skill{checkedSkills.length !== 1 ? 's' : ''}
+                            </Button>
                         </form>
                     )}
 
@@ -155,7 +309,7 @@ export const Skills = () => {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
                                 <div>
                                     <h4 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--color-primary)', marginBottom: '0.25rem' }}>{skill.name}</h4>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
                                         <span className="match-badge" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
                                             {skill.level}
                                         </span>
@@ -163,6 +317,18 @@ export const Skills = () => {
                                             {getStatusIcon(skill.status)} {skill.status}
                                         </span>
                                     </div>
+                                    <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', lineHeight: '1.4', marginBottom: '0.75rem' }}>
+                                        {skill.description}
+                                    </p>
+                                    {skill.components && skill.components.length > 0 && (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.5rem' }}>
+                                            {skill.components.map((c, i) => (
+                                                <span key={i} style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text)' }}>
+                                                    {c}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                                 <button
                                     onClick={() => handleRemoveSkill(skill.name)}
@@ -188,7 +354,12 @@ export const Skills = () => {
 
                             <div style={{ marginTop: 'auto', display: 'flex', gap: '0.75rem' }}>
                                 {skill.status !== 'Verified' && (
-                                    <Button variant="outline" className="btn-full" style={{ fontSize: '0.8125rem' }}>
+                                    <Button 
+                                        variant="outline" 
+                                        className="btn-full" 
+                                        style={{ fontSize: '0.8125rem' }}
+                                        onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}
+                                    >
                                         {skill.status === 'Pending' ? 'Resume Test' : 'Start Assessment'}
                                     </Button>
                                 )}

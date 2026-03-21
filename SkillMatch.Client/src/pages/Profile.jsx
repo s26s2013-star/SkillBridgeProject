@@ -111,11 +111,11 @@ export const Profile = () => {
 
     const toggleSkill = (skillName) => {
         setProfileData(prev => {
-            const exists = prev.skills.includes(skillName);
+            const exists = prev.skills.some(s => (typeof s === 'string' ? s : s.name) === skillName);
             if (exists) {
-                return { ...prev, skills: prev.skills.filter(s => s !== skillName) };
+                return { ...prev, skills: prev.skills.filter(s => (typeof s === 'string' ? s : s.name) !== skillName) };
             } else {
-                return { ...prev, skills: [...prev.skills, skillName] };
+                return { ...prev, skills: [...prev.skills, { name: skillName, level: 'Beginner', progress: 30, status: 'Not tested' }] };
             }
         });
     };
@@ -187,11 +187,13 @@ export const Profile = () => {
                             <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--color-border)' }}>
                                 <h5 style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '1rem' }}>My Skills</h5>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
-                                    {profileData.skills.length > 0 ? profileData.skills.map((skill, index) => (
+                                    {profileData.skills.length > 0 ? profileData.skills.map((skill, index) => {
+                                        const skillName = typeof skill === 'string' ? skill : skill.name;
+                                        return (
                                         <span key={index} style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-full)', fontSize: '0.875rem', fontWeight: '600' }}>
-                                            {skill}
+                                            {skillName}
                                         </span>
-                                    )) : (
+                                    )}) : (
                                         <p style={{ color: 'var(--color-text-light)', fontStyle: 'italic' }}>No skills added yet. Edit your profile to add skills.</p>
                                     )}
                                 </div>
@@ -289,7 +291,7 @@ export const Profile = () => {
                                     <h5 style={{ fontSize: '1rem', color: 'var(--color-primary)', marginBottom: '1rem', fontWeight: '600' }}>Technical Skills</h5>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
                                         {allSkills.technical.map(skill => {
-                                            const isSelected = profileData.skills.includes(skill.skill_name);
+                                            const isSelected = profileData.skills.some(s => (typeof s === 'string' ? s : s.name) === skill.skill_name);
                                             return (
                                                 <button
                                                     key={skill.skill_name}
@@ -322,7 +324,7 @@ export const Profile = () => {
                                     <h5 style={{ fontSize: '1rem', color: '#10B981', marginBottom: '1rem', fontWeight: '600' }}>Soft Skills</h5>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
                                         {allSkills.soft.map(skill => {
-                                            const isSelected = profileData.skills.includes(skill.skill_name);
+                                            const isSelected = profileData.skills.some(s => (typeof s === 'string' ? s : s.name) === skill.skill_name);
                                             return (
                                                 <button
                                                     key={skill.skill_name}

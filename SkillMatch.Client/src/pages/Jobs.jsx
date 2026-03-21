@@ -5,7 +5,7 @@ import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 
 export const Jobs = () => {
     const navigate = useNavigate();
-    const user = authService.getCurrentUser() || mockUser;
+    const user = authService.getCurrentUser() || {};
 
     const handleLogout = () => {
         authService.logout();

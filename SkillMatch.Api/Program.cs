@@ -22,7 +22,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseMongoDB(mongoConnectionString ?? "", "ProjectApp"));
 
 // Swagger / OpenAPI
-builder.Services.AddOpenApi();
+builder.Services.AddSwaggerGen();
 
 // CORS
 builder.Services.AddCors(options =>
@@ -40,7 +40,8 @@ var app = builder.Build();
 // Swagger in development
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
 // app.UseHttpsRedirection();

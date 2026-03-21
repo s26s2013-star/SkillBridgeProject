@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using MongoDB.EntityFrameworkCore;
+using MongoDB.EntityFrameworkCore.Extensions;
 using SkillMatch.Api.Models;
 
 namespace SkillMatch.Api.Data

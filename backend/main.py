@@ -23,7 +23,12 @@ class UserProfileUpdate(BaseModel):
     location: str = ""
     open_to_relocate: bool = False
     job_type: str = ""
-    skills: List[str] = []
+    skills: List[Any] = []
+
+class AssessmentSubmission(BaseModel):
+    email: str
+    skill_name: str
+    submission: str
 
 app = FastAPI()
 
@@ -31,6 +36,7 @@ app = FastAPI()
 origins = [
     "http://localhost:3000",
     "http://localhost:5173",
+    "http://localhost:5174",
 ]
 
 app.add_middleware(
@@ -49,6 +55,7 @@ def get_skills(major: Optional[str] = None):
     query: Dict[str, Any] = {}
     if major:
         query["$or"] = [
+            {"major": {"$regex": major, "$options": "i"}},
             {"skill_name": {"$regex": major, "$options": "i"}},
             {"category": {"$regex": major, "$options": "i"}}
         ]
@@ -185,3 +192,63 @@ def update_user_profile(profile_update: UserProfileUpdate):
     users_collection.update_one({"email": profile_update.email}, {"$set": update_data})
     
     return {"message": "Profile updated successfully"}
+
+@app.post("/api/user/assessment")
+def submit_assessment(sub: AssessmentSubmission):
+    db = get_db()
+    users_collection = db["users"]
+    
+    user = users_collection.find_one({"email": sub.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Simple logic
+    is_valid = len(sub.submission.strip()) > 30
+    status = "Verified" if is_valid else "Pending"
+    
+    # Suggestions
+    suggestion = "Keep practicing. Focus on real-world applications of this skill."
+    name_lower = sub.skill_name.lower()
+    if "database" in name_lower:
+        suggestion = "Great schema work. Next, try optimizing queries with indexing and explore NoSQL alternatives."
+    elif "front-end" in name_lower or "web" in name_lower or "responsive" in name_lower:
+        suggestion = "UI looks good. Consider diving deeper into state management and component lifecycle optimization."
+    elif "oop" in name_lower or "programming" in name_lower:
+        suggestion = "Solid logic. I recommend implementing more design patterns like 'Factory' to improve code modularity."
+    elif "security" in name_lower or "cyber" in name_lower or "penetration" in name_lower:
+        suggestion = "Strong security mindset. Review the latest OWASP Top 10 to stay ahead of common vulnerabilities."
+    elif "cloud" in name_lower:
+        suggestion = "Successful deployment. Explore Infrastructure as Code (Terraform) for more automated scaling."
+    elif "data" in name_lower or "machine" in name_lower or "deep" in name_lower:
+        suggestion = "Strong analytical approach. Try experimenting with different hyperparameter tuning methods to boost model performance."
+
+    skills = user.get("skills", [])
+    updated = False
+    for i, s in enumerate(skills):
+        s_name = s if isinstance(s, str) else s.get("name", "")
+        if s_name.lower() == sub.skill_name.lower():
+            if isinstance(s, str):
+                skills[i] = {
+                    "name": s, "status": status, "progress": 100 if is_valid else 30,
+                    "level": "Intermediate", "suggestion": suggestion
+                }
+            else:
+                # Update existing object using dict unpacking to satisfy linter
+                current_skill = dict(s)
+                current_skill.update({
+                    "status": status,
+                    "progress": 100 if is_valid else current_skill.get("progress", 30),
+                    "suggestion": suggestion
+                })
+                skills[i] = current_skill
+            updated = True
+            break
+    
+    if not updated:
+        skills.append({
+            "name": sub.skill_name, "status": status, "progress": 100 if is_valid else 30,
+            "level": "Beginner", "suggestion": suggestion
+        })
+
+    users_collection.update_one({"email": sub.email}, {"$set": {"skills": skills}})
+    return {"status": status, "suggestion": suggestion}

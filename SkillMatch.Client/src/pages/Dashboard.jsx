@@ -26,80 +26,147 @@ export const Dashboard = () => {
         availableJobs: 0
     });
     const [recentActivity, setRecentActivity] = useState([]);
-    const [profileCompletion, setProfileCompletion] = useState(25);
+    const [profileCompletion, setProfileCompletion] = useState(0);
 
     useEffect(() => {
-        const fetchSkills = async () => {
+        const fetchUserData = async () => {
             try {
-                // Use major to fetch relevant initial skills
-                const majorParam = user.major ? `?major=${encodeURIComponent(user.major)}` : '';
-                const response = await fetch(`http://127.0.0.1:8000/api/skills${majorParam}`);
-                if (response.ok) {
-                    const data = await response.json();
-                    const formattedSkills = data.slice(0, 5).map((apiSkill, index) => ({
-                        name: apiSkill.skill_name,
-                        progress: index === 0 ? 85 : index === 1 ? 65 : 40,
-                        assessed: index === 0,
-                        status: index === 0 ? 'Verified' : 'Pending',
-                        level: index === 0 ? 'Advanced' : 'Beginner'
-                    }));
-                    setDashboardSkills(formattedSkills);
+                // 1. Fetch real user profile
+                const profileResponse = await fetch(`http://127.0.0.1:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+                if (profileResponse.ok) {
+                    const profileData = await profileResponse.json();
                     
-                    // Update stats
-                    setStats(prev => ({
-                        ...prev,
-                        totalSkills: formattedSkills.length,
-                    }));
-                }
-            } catch (error) {
-                console.error("Failed to fetch skills for dashboard:", error);
-            }
-        };
+                    // --- Calculate Profile Completion ---
+                    const fields = [
+                        profileData.name && profileData.name !== 'User',
+                        profileData.major && profileData.major !== 'Not specified',
+                        profileData.experience > 0,
+                        profileData.location && profileData.location !== 'Not specified',
+                        profileData.job_type && profileData.job_type !== 'Not specified',
+                        profileData.skills && profileData.skills.length > 0
+                    ];
+                    const completedFields = fields.filter(Boolean).length;
+                    const completionPercentage = Math.round((completedFields / fields.length) * 100);
+                    setProfileCompletion(completionPercentage);
 
-        const fetchJobs = async () => {
-            try {
-                // Fetch relevant jobs via industry mapped mostly by major or keywords
-                const industryParam = user.major ? `?industry=${encodeURIComponent(user.major)}` : '';
-                const response = await fetch(`http://127.0.0.1:8000/api/jobs${industryParam}`);
-                if (response.ok) {
-                    const data = await response.json();
-                    
-                    // Map the top 4 jobs to the JobMatchCard format
-                    const formattedJobs = data.slice(0, 4).map((apiJob) => {
-                        // Safely parse skills string into an array, fallback to empty array if missing
-                        const skillArray = apiJob.Key_Skills 
-                            ? apiJob.Key_Skills.split(',').map(s => s.trim()).slice(0, 3) 
-                            : [];
-                            
-                        return {
-                            id: apiJob._id || Math.random().toString(),
-                            title: apiJob.Job_Title || 'Unknown Title',
-                            company: apiJob.Company || 'Unknown Company',
-                            location: apiJob.Location || 'Remote',
-                            matchScore: Math.floor(Math.random() * 15) + 85, // Fake score for UI consistency
-                            skills: skillArray,
-                            salary: 'Competitive',
-                            posted: 'Recently',
-                            missingSkills: []
-                        };
+                    const userSkills = profileData.skills || [];
+                    const userSkillNames = userSkills.map(s => (typeof s === 'string' ? s : s.name).toLowerCase());
+                    const verifiedCount = userSkills.filter(s => s.status === 'Verified').length;
+
+                    // --- Generate Recent Activity ---
+                    const activities = [];
+                    userSkills.forEach(s => {
+                        const sName = typeof s === 'string' ? s : s.name;
+                        if (s.status === 'Verified') {
+                            activities.push({
+                                id: Math.random().toString(),
+                                type: 'verification',
+                                text: `Verified ${sName} Skill`,
+                                time: 'Recently',
+                                icon: 'check'
+                            });
+                        }
+                        if (s.progress > 0 && s.status !== 'Verified') {
+                            activities.push({
+                                id: Math.random().toString(),
+                                type: 'assessment',
+                                text: `Started ${sName} Assessment`,
+                                time: 'In progress',
+                                icon: 'clock'
+                            });
+                        }
                     });
-                        
-                    setDashboardJobs(formattedJobs);
                     
-                    setStats(prev => ({
-                        ...prev,
-                        availableJobs: formattedJobs.length,
-                        matchingScore: formattedJobs.length > 0 ? 88 : 0
-                    }));
+                    // Add a default "Joined" activity if list is short
+                    if (activities.length < 3) {
+                        activities.push({
+                            id: 'welcome',
+                            type: 'account',
+                            text: 'Joined SkillBridge Platform',
+                            time: 'Recently',
+                            icon: 'user'
+                        });
+                    }
+                    setRecentActivity(activities.slice(0, 4));
+
+                    const formattedDashboardSkills = userSkills.map(s => ({
+                        name: typeof s === 'string' ? s : s.name,
+                        progress: s.progress || 30,
+                        status: s.status || 'Pending',
+                        level: s.level || 'Beginner',
+                        assessed: s.status === 'Verified'
+                    })).slice(0, 5);
+
+                    setDashboardSkills(formattedDashboardSkills);
+                    
+                    // --- Fetch Jobs and Calculate Match Scores ---
+                    const industryParam = profileData.major ? `?industry=${encodeURIComponent(profileData.major)}` : '';
+                    const jobResponse = await fetch(`http://127.0.0.1:8000/api/jobs${industryParam}`);
+                    if (jobResponse.ok) {
+                        const data = await jobResponse.json();
+                        
+                        let totalMatchScore = 0;
+                        let countWithScore = 0;
+
+                        const formattedJobs = data.slice(0, 10).map((apiJob) => {
+                            const jobSkillString = apiJob.Key_Skills || "";
+                            const jobSkillArray = jobSkillString.split(',').map(s => s.trim().toLowerCase()).filter(s => s);
+                            
+                            // Calculate Real Match Score
+                            let matched = 0;
+                            if (jobSkillArray.length > 0) {
+                                jobSkillArray.forEach(js => {
+                                    if (userSkillNames.some(us => us.includes(js) || js.includes(us))) {
+                                        matched++;
+                                    }
+                                });
+                            }
+                            
+                            const matchPercentage = jobSkillArray.length > 0 
+                                ? Math.round((matched / jobSkillArray.length) * 100) 
+                                : 0;
+
+                            if (matchPercentage > 0) {
+                                totalMatchScore += matchPercentage;
+                                countWithScore++;
+                            }
+
+                            return {
+                                id: apiJob._id || Math.random().toString(),
+                                title: apiJob.Job_Title || 'Unknown Title',
+                                company: apiJob.Company || 'Unknown Company',
+                                location: apiJob.Location || 'Remote',
+                                matchScore: matchPercentage,
+                                skills: jobSkillArray.slice(0, 3).map(s => s.charAt(0).toUpperCase() + s.slice(1)),
+                                salary: 'Competitive',
+                                posted: 'Recently',
+                                missingSkills: jobSkillArray.filter(js => !userSkillNames.some(us => us.includes(js) || js.includes(us)))
+                            };
+                        });
+
+                        // Filter by highest match first
+                        const sortedJobs = formattedJobs.sort((a, b) => b.matchScore - a.matchScore).slice(0, 4);
+                        setDashboardJobs(sortedJobs);
+                        
+                        const avgScore = countWithScore > 0 ? Math.round(totalMatchScore / countWithScore) : 0;
+
+                        setStats({
+                            totalSkills: userSkills.length,
+                            assessmentsCompleted: verifiedCount,
+                            availableJobs: formattedJobs.filter(j => j.matchScore > 20).length,
+                            matchingScore: avgScore
+                        });
+                    }
                 }
             } catch (error) {
-                console.error("Failed to fetch jobs for dashboard:", error);
+                console.error("Dashboard calculation failed:", error);
             }
         };
 
-        fetchSkills();
-        fetchJobs();
-    }, []);
+        if (user.email) {
+            fetchUserData();
+        }
+    }, [user.email]);
 
     const handleLogout = () => {
         authService.logout();

@@ -38,8 +38,7 @@ export const authService = {
     },
 
     async register(name, email, password, role, major) {
-        try {
-            const response = await fetch(endpoints.auth.register, {
+        const response = await fetch(endpoints.auth.register, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
