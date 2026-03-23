@@ -84,7 +84,7 @@ export const AuthLayout = ({ children, title, subtitle }) => {
                         Bridge your skills to real opportunities.
                     </h3>
                     <p style={{ fontSize: '1.25rem', color: 'var(--color-text-muted)', lineHeight: '1.6' }}>
-                        SkillsBridge helps students and employers connect through smart skill-based matching and assessment.
+                        SkillsBridge helps students and graduates connect through smart skill-based matching and assessment.
                     </p>
                 </div>
             </div>

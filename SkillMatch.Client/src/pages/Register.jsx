@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Input } from '../components/Input';
 import { Button } from '../components/Button';
@@ -12,9 +12,25 @@ export const Register = () => {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [role, setRole] = useState('student');
     const [major, setMajor] = useState('');
+    const [specializations, setSpecializations] = useState([]);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        const fetchSpecializations = async () => {
+            try {
+                const res = await fetch('http://127.0.0.1:8000/api/specializations');
+                if (res.ok) {
+                    const data = await res.json();
+                    setSpecializations(data);
+                }
+            } catch (err) {
+                console.error("Failed to load specializations", err);
+            }
+        };
+        fetchSpecializations();
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -79,14 +95,34 @@ export const Register = () => {
                     disabled={loading}
                 />
 
-                <Input
-                    label="Major / Field of Study"
-                    type="text"
-                    placeholder="e.g. Computer Science"
-                    value={major}
-                    onChange={(e) => setMajor(e.target.value)}
-                    disabled={loading}
-                />
+                <div style={{ marginBottom: '1.25rem' }}>
+                    <label style={{ fontSize: '0.875rem', fontWeight: '500', color: 'var(--color-text)', display: 'block', marginBottom: '0.5rem' }}>
+                        Major / Field of Study
+                    </label>
+                    <select
+                        value={major}
+                        onChange={(e) => setMajor(e.target.value)}
+                        disabled={loading || specializations.length === 0}
+                        required
+                        style={{
+                            width: '100%',
+                            padding: '0.75rem 1rem',
+                            borderRadius: 'var(--radius-md)',
+                            border: '1px solid var(--color-border)',
+                            backgroundColor: 'white',
+                            fontSize: '1rem',
+                            outline: 'none',
+                            fontFamily: 'inherit',
+                            transition: 'border-color 0.2s',
+                            boxSizing: 'border-box'
+                        }}
+                    >
+                        <option value="" disabled>Select your specialization</option>
+                        {specializations.map(spec => (
+                            <option key={spec} value={spec}>{spec}</option>
+                        ))}
+                    </select>
+                </div>
 
                 <Input
                     label="Password"
@@ -113,7 +149,7 @@ export const Register = () => {
                         I am a...
                     </label>
                     <div style={{ display: 'flex', gap: '1rem' }}>
-                        {['student', 'employer'].map((r) => (
+                        {['student', 'graduate'].map((r) => (
                             <label
                                 key={r}
                                 style={{

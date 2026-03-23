@@ -29,6 +29,15 @@ class AssessmentSubmission(BaseModel):
     email: str
     skill_name: str
     submission: str
+    expected_keywords: List[str] = []
+
+class AssessmentResult(BaseModel):
+    userId: str
+    skillId: str
+    answers: str
+    aiScore: int
+    status: str = "completed"
+    completedAt: str
 
 app = FastAPI()
 
@@ -71,6 +80,88 @@ def get_skills(major: Optional[str] = None):
         
     return skills_list
 
+@app.get("/api/specializations")
+def get_specializations():
+    db = get_db()
+    skills_collection = db["skills"]
+    distinct_majors = skills_collection.distinct("major")
+    
+    clean_majors = []
+    for major in distinct_majors:
+        if isinstance(major, str) and major.strip():
+            trimmed = major.strip()
+            if trimmed not in clean_majors:
+                clean_majors.append(trimmed)
+                
+    return sorted(clean_majors)
+
+@app.get("/api/skills/by-specialization")
+def get_skills_by_specialization(major: str):
+    db = get_db()
+    skills_collection = db["skills"]
+    major_clean = major.strip()
+    
+    # Case-insensitive exact match on 'major' field only
+    query = {"major": {"$regex": f"^{major_clean}$", "$options": "i"}}
+    skills_cursor = skills_collection.find(query)
+    
+    skills_list = []
+    for skill in skills_cursor:
+        skill["_id"] = str(skill["_id"])
+        skills_list.append(skill)
+    
+    # Fallback: if nothing found with exact match, try contains match
+    if not skills_list:
+        query_fallback = {"major": {"$regex": major_clean, "$options": "i"}}
+        for skill in skills_collection.find(query_fallback):
+            skill["_id"] = str(skill["_id"])
+            skills_list.append(skill)
+        
+    return skills_list
+
+@app.get("/api/skills/for-user")
+def get_skills_for_user_optimized(email: str):
+    db = get_db()
+    
+    # 1. Fetch user to get major
+    user_doc = db["users"].find_one({"email": email.strip().lower()})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    major = user_doc.get("major", "").strip()
+    result = {"major": major, "skills": []}
+    
+    if not major or major == "Not specified":
+        return result
+        
+    # 2. Fetch specific fields for skills matching the major
+    query = {"major": {"$regex": f"^{major}$", "$options": "i"}}
+    skills_cursor = list(db["skills"].find(query))
+    
+    # Fallback partial match if exact match yields nothing
+    if not skills_cursor:
+        query_fallback = {"major": {"$regex": major, "$options": "i"}}
+        skills_cursor = list(db["skills"].find(query_fallback))
+        
+    # 3. Format into minimal optimized structure matching frontend requirements
+    for s in skills_cursor:
+        result["skills"].append({
+            "id": str(s["_id"]),
+            "name": s.get("skill_name", ""),
+            "type": s.get("category", "Technical"),
+            "shortDescription": s.get("beginner_criteria", ""),
+            "details": {
+                "importance": s.get("beginner_criteria", ""),
+                "intermediate": s.get("intermediate_criteria", ""),
+                "advanced": s.get("advanced_criteria", ""),
+                "components": s.get("key_components", []),
+                "assessment": s.get("assessment_description", ""),
+                "source": s.get("source", "")
+            }
+        })
+        
+    return result
+
 @app.get("/api/jobs")
 def get_jobs(industry: Optional[str] = None, category: Optional[str] = None):
     db = get_db()
@@ -104,15 +195,20 @@ def register_user(user: UserRegister):
     db = get_db()
     users_collection = db["users"]
     
-    if users_collection.find_one({"email": user.email}):
+    email_clean = user.email.lower().strip()
+    if users_collection.find_one({"email": email_clean}):
         raise HTTPException(status_code=400, detail="Email already registered")
         
+    role_clean = user.role.lower().strip()
+    if role_clean in ["employer", "employee"]:
+        role_clean = "graduate"
+        
     new_user = {
-        "name": user.name,
-        "email": user.email,
+        "name": user.name.strip(),
+        "email": email_clean,
         "password": user.password,
-        "major": user.major if user.major else "Not specified",
-        "role": user.role,
+        "major": user.major.strip() if user.major and user.major.strip() else "Not specified",
+        "role": role_clean,
         "location": "Not specified",
         "experience": 0,
         "job_type": "Not specified",
@@ -131,7 +227,8 @@ def login_user(user: UserLogin):
     db = get_db()
     users_collection = db["users"]
     
-    db_user = users_collection.find_one({"email": user.email, "password": user.password})
+    email_clean = user.email.lower().strip()
+    db_user = users_collection.find_one({"email": email_clean, "password": user.password})
     
     if not db_user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -202,25 +299,40 @@ def submit_assessment(sub: AssessmentSubmission):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Simple logic
-    is_valid = len(sub.submission.strip()) > 30
-    status = "Verified" if is_valid else "Pending"
+    # Dynamic Heuristic Logic
+    submission_text = sub.submission.strip().lower()
+    char_count = len(submission_text)
     
-    # Suggestions
-    suggestion = "Keep practicing. Focus on real-world applications of this skill."
-    name_lower = sub.skill_name.lower()
-    if "database" in name_lower:
-        suggestion = "Great schema work. Next, try optimizing queries with indexing and explore NoSQL alternatives."
-    elif "front-end" in name_lower or "web" in name_lower or "responsive" in name_lower:
-        suggestion = "UI looks good. Consider diving deeper into state management and component lifecycle optimization."
-    elif "oop" in name_lower or "programming" in name_lower:
-        suggestion = "Solid logic. I recommend implementing more design patterns like 'Factory' to improve code modularity."
-    elif "security" in name_lower or "cyber" in name_lower or "penetration" in name_lower:
-        suggestion = "Strong security mindset. Review the latest OWASP Top 10 to stay ahead of common vulnerabilities."
-    elif "cloud" in name_lower:
-        suggestion = "Successful deployment. Explore Infrastructure as Code (Terraform) for more automated scaling."
-    elif "data" in name_lower or "machine" in name_lower or "deep" in name_lower:
-        suggestion = "Strong analytical approach. Try experimenting with different hyperparameter tuning methods to boost model performance."
+    # Base score on length (up to 40%, expecting ~300 chars for a good answer)
+    length_score = min(40, int((char_count / 300) * 40)) if char_count > 0 else 0
+    
+    # Keyword score (up to 60%)
+    keyword_score = 0
+    matched_keywords = []
+    if sub.expected_keywords:
+        for kw in sub.expected_keywords:
+            if kw.lower() in submission_text:
+                matched_keywords.append(kw)
+        
+        match_ratio = len(matched_keywords) / len(sub.expected_keywords)
+        keyword_score = int(match_ratio * 60)
+    else:
+        keyword_score = 40 if char_count > 100 else 10
+        
+    total_score = length_score + keyword_score
+    
+    is_valid = total_score >= 60
+    status = "Verified" if is_valid else "Pending"
+    calculated_level = "Advanced" if total_score >= 85 else ("Intermediate" if total_score >= 60 else "Beginner")
+    
+    suggestion = f"Your proficiency score is {total_score}%. "
+    if not is_valid:
+        suggestion += "Keep practicing. Focus on providing more detailed, real-world examples in your answers."
+    else:
+        if matched_keywords:
+            suggestion += f"Great job! You demonstrated strong knowledge by covering key concepts like: {', '.join(matched_keywords[:3])}."
+        else:
+            suggestion += "Great job! You provided a solid, structurally sound answer."
 
     skills = user.get("skills", [])
     updated = False
@@ -229,15 +341,15 @@ def submit_assessment(sub: AssessmentSubmission):
         if s_name.lower() == sub.skill_name.lower():
             if isinstance(s, str):
                 skills[i] = {
-                    "name": s, "status": status, "progress": 100 if is_valid else 30,
-                    "level": "Intermediate", "suggestion": suggestion
+                    "name": s, "status": status, "progress": total_score,
+                    "level": calculated_level, "suggestion": suggestion
                 }
             else:
-                # Update existing object using dict unpacking to satisfy linter
                 current_skill = dict(s)
                 current_skill.update({
                     "status": status,
-                    "progress": 100 if is_valid else current_skill.get("progress", 30),
+                    "progress": total_score,
+                    "level": calculated_level,
                     "suggestion": suggestion
                 })
                 skills[i] = current_skill
@@ -246,9 +358,28 @@ def submit_assessment(sub: AssessmentSubmission):
     
     if not updated:
         skills.append({
-            "name": sub.skill_name, "status": status, "progress": 100 if is_valid else 30,
-            "level": "Beginner", "suggestion": suggestion
+            "name": sub.skill_name, "status": status, "progress": total_score,
+            "level": calculated_level, "suggestion": suggestion
         })
 
     users_collection.update_one({"email": sub.email}, {"$set": {"skills": skills}})
-    return {"status": status, "suggestion": suggestion}
+    return {"status": status, "suggestion": suggestion, "score": total_score, "level": calculated_level}
+
+@app.post("/api/assessment/result")
+def save_short_assessment_result(result: AssessmentResult):
+    db = get_db()
+    assessments_collection = db["assessments"]
+    
+    doc = result.dict() if hasattr(result, 'dict') else result.model_dump()
+    assessments_collection.insert_one(doc)
+    return {"message": "Assessment saved successfully"}
+
+@app.get("/api/assessment/results")
+def get_user_assessments(userId: str):
+    db = get_db()
+    assessments_collection = db["assessments"]
+    
+    records = list(assessments_collection.find({"userId": userId, "status": "completed"}))
+    for r in records:
+        r["_id"] = str(r["_id"])
+    return records
