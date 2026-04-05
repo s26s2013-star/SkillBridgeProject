@@ -11,14 +11,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Placeholder for the MongoDB connection string
-MONGO_URI = "mongodb+srv://Btechp_db_user:0mWTOVX6V0thXvUk@cluster0.ci52bsd.mongodb.net/?retryWrites=true&w=majority&tlsAllowInvalidCertificates=true&appName=Cluster0"
+MONGO_URI = "mongodb+srv://manaralnabhani95_db_user:B%26techp5@cluster0.wjwh5vq.mongodb.net/SkillBridgeDB?appName=Cluster0"
 
 def get_db():
     try:
         client = pymongo.MongoClient(MONGO_URI, tlsCAFile=ca)
         # Verify connection
         client.admin.command('ping')
-        db = client["skillbridge"]
+        db = client["SkillBridgeDB"]
         return db
     except ConnectionFailure as e:
         logger.error(f"Could not connect to MongoDB: {e}")

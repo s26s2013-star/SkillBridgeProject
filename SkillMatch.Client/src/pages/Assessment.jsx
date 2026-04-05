@@ -38,6 +38,8 @@ export const Assessment = () => {
     const [submission, setSubmission] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [result, setResult] = useState(null);
+    const [selectedFile, setSelectedFile] = useState(null);
+    const [submissionMode, setSubmissionMode] = useState('text');
 
     useEffect(() => {
         if (!user || !user.email) {
@@ -323,21 +325,45 @@ export const Assessment = () => {
     };
 
     const handleSubmitAssessment = async () => {
-        if (!submission.trim() || !activeSkillName) return;
-
         setIsSubmitting(true);
         try {
-            const response = await fetch('http://localhost:8000/api/user/assessment', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    email: user.email,
-                    skill_name: activeSkillName,
-                    submission: submission,
-                    expected_keywords: evaluationData?.keywords || []
-                })
-            });
-            const data = await response.json();
+            let data;
+            
+            if (submissionMode === 'upload') {
+                if (!selectedFile || !activeSkillName) {
+                    setIsSubmitting(false);
+                    return;
+                }
+                
+                const formData = new FormData();
+                formData.append('email', user?.email || "unknown");
+                formData.append('skill_name', activeSkillName);
+                formData.append('file', selectedFile);
+
+                const response = await fetch('http://127.0.0.1:8000/api/user/assessment/upload_evaluate', {
+                    method: 'POST',
+                    body: formData
+                });
+                data = await response.json();
+                
+            } else {
+                if (!submission.trim() || !activeSkillName) {
+                    setIsSubmitting(false);
+                    return;
+                }
+                
+                const response = await fetch('http://localhost:8000/api/user/assessment', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: user.email,
+                        skill_name: activeSkillName,
+                        submission: submission,
+                        expected_keywords: evaluationData?.keywords || []
+                    })
+                });
+                data = await response.json();
+            }
             
             await fetch('http://127.0.0.1:8000/api/assessment/result', {
                 method: 'POST',
@@ -345,7 +371,7 @@ export const Assessment = () => {
                 body: JSON.stringify({
                     userId: user?.id || user?.email || "unknown",
                     skillId: activeSkillName,
-                    answers: submission,
+                    answers: submissionMode === 'upload' ? `File: ${selectedFile?.name}` : submission,
                     aiScore: data.score || 0,
                     status: "completed",
                     completedAt: new Date().toISOString()
@@ -363,6 +389,7 @@ export const Assessment = () => {
     const resetEvaluation = () => {
         setResult(null);
         setSubmission('');
+        setSelectedFile(null);
         navigate('/assessment'); // Removes query param, returns to hub
     };
 
@@ -737,15 +764,32 @@ export const Assessment = () => {
                             padding: '2rem',
                             boxShadow: 'var(--shadow-sm)'
                         }}>
+                            <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
+                                <button
+                                    onClick={() => setSubmissionMode('text')}
+                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'text' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'text' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                >
+                                    Write Answer
+                                </button>
+                                <button
+                                    onClick={() => setSubmissionMode('upload')}
+                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'upload' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'upload' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                >
+                                    Upload Work Sample
+                                </button>
+                            </div>
+
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
                                 <div style={{ 
                                     width: '40px', height: '40px', background: 'rgba(59, 130, 246, 0.1)', 
                                     borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
                                     color: 'var(--color-primary)'
                                 }}>
-                                    <FileText size={24} />
+                                    {submissionMode === 'text' ? <FileText size={24} /> : <UploadCloud size={24} />}
                                 </div>
-                                <h3 style={{ margin: 0 }}>Practical Scenario Task</h3>
+                                <h3 style={{ margin: 0 }}>
+                                    {submissionMode === 'text' ? 'Practical Scenario Task' : 'Upload Work Sample'}
+                                </h3>
                             </div>
 
                             <div style={{ 
@@ -757,28 +801,70 @@ export const Assessment = () => {
                                 </p>
                             </div>
 
-                            <div style={{ position: 'relative' }}>
-                                <textarea 
-                                    className="form-control"
-                                    placeholder="Write your detailed, scenario-based answer here. Assume you are communicating with senior engineers..."
-                                    style={{ 
-                                        minHeight: '250px', width: '100%', padding: '1.25rem', fontFamily: 'system-ui, sans-serif', 
-                                        fontSize: '1rem', lineHeight: 1.6, borderRadius: 'var(--radius-md)',
-                                        border: '1px solid var(--color-border)', resize: 'vertical'
-                                    }}
-                                    value={submission}
-                                    onChange={(e) => setSubmission(e.target.value)}
-                                />
-                                <div style={{ 
-                                    position: 'absolute', bottom: '1rem', right: '1.5rem', 
-                                    color: 'var(--color-text-muted)', fontSize: '0.85rem'
-                                }}>
-                                    {submission.length} characters
+                            {submissionMode === 'text' ? (
+                                <div style={{ position: 'relative' }}>
+                                    <textarea 
+                                        className="form-control"
+                                        placeholder="Write your detailed, scenario-based answer here. Assume you are communicating with senior engineers..."
+                                        style={{ 
+                                            minHeight: '250px', width: '100%', padding: '1.25rem', fontFamily: 'system-ui, sans-serif', 
+                                            fontSize: '1rem', lineHeight: 1.6, borderRadius: 'var(--radius-md)',
+                                            border: '1px solid var(--color-border)', resize: 'vertical'
+                                        }}
+                                        value={submission}
+                                        onChange={(e) => setSubmission(e.target.value)}
+                                    />
+                                    <div style={{ 
+                                        position: 'absolute', bottom: '1rem', right: '1.5rem', 
+                                        color: 'var(--color-text-muted)', fontSize: '0.85rem'
+                                    }}>
+                                        {submission.length} characters
+                                    </div>
                                 </div>
-                            </div>
+                            ) : (
+                                <div style={{ marginTop: '1rem', padding: '2rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '2px dashed var(--color-border)', textAlign: 'center' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+                                        <div style={{ background: 'var(--color-white)', padding: '1rem', borderRadius: '50%', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
+                                            <UploadCloud size={32} color="var(--color-primary)" />
+                                        </div>
+                                        <h4 style={{ margin: 0 }}>Choose a file to upload</h4>
+                                        <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.9rem', maxWidth: '300px' }}>
+                                            Supported: PDF, JS, PY, TSX, HTML, CSS, CPP (Max 5MB)
+                                        </p>
+                                        
+                                        <input 
+                                            type="file" 
+                                            id="file-upload" 
+                                            style={{ display: 'none' }} 
+                                            onChange={(e) => {
+                                                if (e.target.files && e.target.files[0]) setSelectedFile(e.target.files[0]);
+                                            }}
+                                            accept=".pdf,.js,.py,.jsx,.ts,.tsx,.java,.cpp,.cs,.html,.css"
+                                        />
+                                        <label htmlFor="file-upload" style={{ marginTop: '0.5rem' }}>
+                                            <Button as="span" variant="outline" style={{ padding: '0.75rem 1.5rem' }}>Browse Files</Button>
+                                        </label>
+                                    </div>
+                                    
+                                    {selectedFile && (
+                                        <div style={{ marginTop: '2rem', padding: '1rem', background: 'var(--color-white)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                <FileText size={20} color="var(--color-primary)" />
+                                                <div style={{ textAlign: 'left' }}>
+                                                    <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--color-text)' }}>{selectedFile.name}</div>
+                                                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{(selectedFile.size / 1024).toFixed(1)} KB</div>
+                                                </div>
+                                            </div>
+                                            <button onClick={() => setSelectedFile(null)} style={{ background: 'transparent', border: 'none', padding: '0.5rem', cursor: 'pointer', color: 'var(--color-error)' }}>
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
 
                             <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
-                                <Button className="btn-primary" style={{ padding: '0.75rem 2.5rem' }} onClick={handleSubmitAssessment} disabled={!submission || isSubmitting}>
+                                <Button className="btn-primary" style={{ padding: '0.75rem 2.5rem' }} onClick={handleSubmitAssessment} disabled={(submissionMode === 'text' && !submission.trim()) || (submissionMode === 'upload' && !selectedFile) || isSubmitting}>
                                     {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> Processing...</> : 'Submit Assessment'}
                                 </Button>
                             </div>

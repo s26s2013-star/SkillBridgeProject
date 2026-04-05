@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from datetime import datetime
 from pydantic import BaseModel
 from typing import Any, Dict, Optional, List
 from fastapi.middleware.cors import CORSMiddleware
@@ -373,6 +374,132 @@ def save_short_assessment_result(result: AssessmentResult):
     doc = result.dict() if hasattr(result, 'dict') else result.model_dump()
     assessments_collection.insert_one(doc)
     return {"message": "Assessment saved successfully"}
+
+@app.post("/api/assessment/upload")
+async def upload_assessment_file(
+    userId: str = Form(...),
+    skillName: str = Form(...),
+    file: UploadFile = File(...)
+):
+    db = get_db()
+    uploads_collection = db["file_uploads"]
+    
+    file_info = {
+        "userId": userId,
+        "skill": skillName,
+        "file_name": file.filename,
+        "upload_date": datetime.utcnow().isoformat(),
+        "status": "uploaded"
+    }
+    
+    uploads_collection.insert_one(file_info)
+    return {"message": "File uploaded successfully", "file_name": file.filename}
+
+@app.post("/api/user/assessment/upload_evaluate")
+async def evaluate_uploaded_file(
+    email: str = Form(...),
+    skill_name: str = Form(...),
+    file: UploadFile = File(...)
+):
+    import os
+    import json
+    
+    db = get_db()
+    users_collection = db["users"]
+    
+    user = users_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    contents = await file.read()
+    
+    api_key = os.environ.get("GEMINI_API_KEY")
+    
+    total_score = 40
+    calculated_level = "Beginner"
+    suggestion = "AI evaluation skipped. No GEMINI_API_KEY found in the environment."
+    status = "Pending"
+    
+    if api_key:
+        try:
+            import google.generativeai as genai
+            
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Decode file contents safely
+            text_content = contents.decode('utf-8', errors='ignore')
+            
+            prompt = f"""
+You are an expert technical assessor.
+Evaluate the following work sample for the skill: {skill_name}.
+Read the uploaded file content and return your evaluation in a structured JSON format.
+
+{text_content}
+
+Return ONLY a valid JSON object matching this schema exactly, with NO markdown formatting, NO backticks, and NO extra text:
+{{
+  "score": integer between 0 and 100,
+  "level": "Beginner" or "Intermediate" or "Advanced",
+  "feedback": "A concise paragraph explaining strengths, weaknesses, and areas for improvement."
+}}
+"""
+            response = model.generate_content(prompt)
+            
+            # Clean possible markdown formatting
+            raw_text = response.text.replace('```json', '').replace('```', '').strip()
+            ai_data = json.loads(raw_text)
+            
+            total_score = int(ai_data.get("score", 40))
+            calculated_level = ai_data.get("level", "Beginner")
+            suggestion = ai_data.get("feedback", "AI evaluation completed.")
+            
+            total_score = min(max(total_score, 0), 100)
+            is_valid = total_score >= 60
+            status = "Verified" if is_valid else "Pending"
+            
+        except Exception as e:
+            suggestion = f"AI Evaluation encountered an error: {str(e)}"
+            total_score = 40
+            calculated_level = "Beginner"
+            status = "Pending"
+
+    skills = user.get("skills", [])
+    updated = False
+    for i, s in enumerate(skills):
+        s_name = s if isinstance(s, str) else s.get("name", "")
+        if s_name.lower() == skill_name.lower():
+            if isinstance(s, str):
+                skills[i] = {
+                    "name": s, "status": status, "progress": total_score,
+                    "level": calculated_level, "suggestion": suggestion
+                }
+            else:
+                current_skill = dict(s)
+                current_skill.update({
+                    "status": status,
+                    "progress": total_score,
+                    "level": calculated_level,
+                    "suggestion": suggestion
+                })
+                skills[i] = current_skill
+            updated = True
+            break
+            
+    if not updated:
+        skills.append({
+            "name": skill_name, "status": status, "progress": total_score,
+            "level": calculated_level, "suggestion": suggestion
+        })
+
+    users_collection.update_one({"email": email}, {"$set": {"skills": skills}})
+    
+    return {
+        "status": status, 
+        "suggestion": suggestion, 
+        "score": total_score, 
+        "level": calculated_level
+    }
 
 @app.get("/api/assessment/results")
 def get_user_assessments(userId: str):
