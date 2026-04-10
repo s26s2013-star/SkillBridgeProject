@@ -39,7 +39,11 @@ export const Assessment = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [result, setResult] = useState(null);
     const [selectedFile, setSelectedFile] = useState(null);
-    const [submissionMode, setSubmissionMode] = useState('text');
+    const [submissionMode, setSubmissionMode] = useState('quiz');
+    const [wantsToReassess, setWantsToReassess] = useState(false);
+    const [quizQuestions, setQuizQuestions] = useState([]);
+    const [quizAnswers, setQuizAnswers] = useState(new Array(10).fill(null));
+    const [quizLoading, setQuizLoading] = useState(false);
 
     useEffect(() => {
         if (!user || !user.email) {
@@ -116,6 +120,17 @@ export const Assessment = () => {
                         category: match ? match.category : 'Custom'
                     });
                     setEvaluationData(getEvaluationForSkill(activeSkillName, match ? match.category : ''));
+                    
+                    setQuizLoading(true);
+                    fetch(`http://127.0.0.1:8000/api/assessment/quiz-questions?skill_name=${encodeURIComponent(activeSkillName)}&category=${encodeURIComponent(match ? match.category : 'Technical')}`)
+                        .then(res => res.json())
+                        .then(data => {
+                            const qs = data.questions || [];
+                            setQuizQuestions(qs);
+                            setQuizAnswers(new Array(qs.length).fill(null));
+                        })
+                        .catch(err => console.error("Error fetching quiz:", err))
+                        .finally(() => setQuizLoading(false));
                 }
 
             } catch (error) {
@@ -329,7 +344,23 @@ export const Assessment = () => {
         try {
             let data;
             
-            if (submissionMode === 'upload') {
+            if (submissionMode === 'quiz') {
+                if (quizAnswers.some(a => a === null)) {
+                    setIsSubmitting(false);
+                    return;
+                }
+                const response = await fetch('http://127.0.0.1:8000/api/user/assessment/quiz_evaluate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: user.email,
+                        skill_name: activeSkillName,
+                        answers: quizAnswers
+                    })
+                });
+                data = await response.json();
+                
+            } else if (submissionMode === 'upload') {
                 if (!selectedFile || !activeSkillName) {
                     setIsSubmitting(false);
                     return;
@@ -371,7 +402,7 @@ export const Assessment = () => {
                 body: JSON.stringify({
                     userId: user?.id || user?.email || "unknown",
                     skillId: activeSkillName,
-                    answers: submissionMode === 'upload' ? `File: ${selectedFile?.name}` : submission,
+                    answers: submissionMode === 'quiz' ? `AI Quiz Score: ${data.score}` : (submissionMode === 'upload' ? `File: ${selectedFile?.name}` : submission),
                     aiScore: data.score || 0,
                     status: "completed",
                     completedAt: new Date().toISOString()
@@ -681,20 +712,40 @@ export const Assessment = () => {
                                             </div>
                                         </div>
 
-                                        <div style={{ marginTop: 'auto', display: 'flex', gap: '0.75rem' }}>
-                                            {skill.status !== 'Verified' && (
+                                        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                            {skill.status === 'Verified' && (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--color-accent)', fontSize: '0.875rem', fontWeight: '600', width: '100%', justifyContent: 'center', padding: '0.5rem', border: '1px dashed var(--color-accent)', borderRadius: 'var(--radius-md)' }}>
+                                                    <CheckCircle2 size={16} /> Strongly Verified
+                                                </div>
+                                            )}
+                                            {skill.status === 'Not tested' ? (
                                                 <Button 
                                                     variant="outline" 
                                                     className="btn-full" 
                                                     style={{ fontSize: '0.8125rem' }}
                                                     onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}
                                                 >
-                                                    Complete Assessment
+                                                    {skill.category === 'Soft' ? 'Reassess' : 'Complete Assessment'}
                                                 </Button>
-                                            )}
-                                            {skill.status === 'Verified' && (
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--color-accent)', fontSize: '0.875rem', fontWeight: '600', width: '100%', justifyContent: 'center', padding: '0.5rem', border: '1px dashed var(--color-accent)', borderRadius: 'var(--radius-md)' }}>
-                                                    <CheckCircle2 size={16} /> Strongly Verified
+                                            ) : (
+                                                <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
+                                                    <Button 
+                                                        variant="outline" 
+                                                        style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem' }}
+                                                        onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}
+                                                    >
+                                                        Reassess
+                                                    </Button>
+                                                    {skill.category !== 'Soft' && (
+                                                        <Button 
+                                                            variant="outline" 
+                                                            style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem', opacity: 0.6, cursor: 'not-allowed' }}
+                                                            onClick={() => {}}
+                                                            disabled
+                                                        >
+                                                            Show Matching
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
@@ -754,7 +805,36 @@ export const Assessment = () => {
                     </div>
                 </div>
 
-                {!result ? (
+                {(() => {
+                    const activeSkillData = skills.find(s => s.name.toLowerCase() === activeSkillName.toLowerCase());
+                    const isCompleted = activeSkillData && activeSkillData.status !== 'Not tested';
+                    const showAssessmentForm = !isCompleted || wantsToReassess;
+
+                    if (!showAssessmentForm) {
+                        return (
+                            <div className="animate-fade-in" style={{ background: 'var(--color-bg-paper)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', padding: '3rem', textAlign: 'center', boxShadow: 'var(--shadow-md)' }}>
+                                <div style={{ width: '80px', height: '80px', background: 'rgba(59, 130, 246, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem auto', color: 'var(--color-primary)' }}>
+                                    <CheckCircle2 size={48} />
+                                </div>
+                                <h2 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>Assessment Completed</h2>
+                                <p style={{ color: 'var(--color-text-muted)', maxWidth: '500px', margin: '0 auto 2.5rem auto', fontSize: '1.1rem' }}>
+                                    You have already completed the evaluation for {activeSkillName} with a score of {activeSkillData.progress}%.
+                                </p>
+                                
+                                <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', alignItems: 'flex-start' }}>
+                                    <Button variant="outline" onClick={() => setWantsToReassess(true)} style={{ padding: '0.75rem 2rem' }}>Reassess</Button>
+                                    {activeSkillData.category !== 'Soft' && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
+                                            <Button className="btn-primary" disabled style={{ padding: '0.75rem 2rem', opacity: 0.6, cursor: 'not-allowed' }}>Show Matching</Button>
+                                            <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>Coming soon</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    return !result ? (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '2rem' }}>
                         {/* Task Area */}
                         <div style={{ 
@@ -766,17 +846,25 @@ export const Assessment = () => {
                         }}>
                             <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
                                 <button
+                                    onClick={() => setSubmissionMode('quiz')}
+                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'quiz' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'quiz' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                >
+                                    AI Quiz
+                                </button>
+                                <button
                                     onClick={() => setSubmissionMode('text')}
                                     style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'text' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'text' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
                                 >
                                     Write Answer
                                 </button>
-                                <button
-                                    onClick={() => setSubmissionMode('upload')}
-                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'upload' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'upload' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
-                                >
-                                    Upload Work Sample
-                                </button>
+                                {skillDetails.category !== 'Soft' && (
+                                    <button
+                                        onClick={() => setSubmissionMode('upload')}
+                                        style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'upload' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'upload' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                    >
+                                        Upload Work Sample
+                                    </button>
+                                )}
                             </div>
 
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
@@ -785,23 +873,66 @@ export const Assessment = () => {
                                     borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
                                     color: 'var(--color-primary)'
                                 }}>
-                                    {submissionMode === 'text' ? <FileText size={24} /> : <UploadCloud size={24} />}
+                                    {submissionMode === 'quiz' ? <CheckCircle2 size={24} /> : (submissionMode === 'text' ? <FileText size={24} /> : <UploadCloud size={24} />)}
                                 </div>
                                 <h3 style={{ margin: 0 }}>
-                                    {submissionMode === 'text' ? 'Practical Scenario Task' : 'Upload Work Sample'}
+                                    {submissionMode === 'quiz' ? 'AI Generated Evaluation Quiz' : (submissionMode === 'text' ? 'Practical Scenario Task' : 'Upload Work Sample')}
                                 </h3>
                             </div>
 
-                            <div style={{ 
-                                background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', 
-                                marginBottom: '2rem', borderLeft: '4px solid var(--color-primary)' 
-                            }}>
-                                <p style={{ margin: 0, lineHeight: 1.6, fontWeight: 500, fontSize: '1.05rem', color: 'var(--color-text)' }}>
-                                    {evaluationData.question}
-                                </p>
-                            </div>
+                            {submissionMode !== 'quiz' && (
+                                <div style={{ 
+                                    background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', 
+                                    marginBottom: '2rem', borderLeft: '4px solid var(--color-primary)' 
+                                }}>
+                                    <p style={{ margin: 0, lineHeight: 1.6, fontWeight: 500, fontSize: '1.05rem', color: 'var(--color-text)' }}>
+                                        {evaluationData.question}
+                                    </p>
+                                </div>
+                            )}
 
-                            {submissionMode === 'text' ? (
+                            {submissionMode === 'quiz' ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                                    {quizLoading ? (
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '3rem' }}>
+                                            <Loader2 className="animate-spin" size={32} color="var(--color-primary)" style={{ marginBottom: '1rem' }} />
+                                            <div style={{ color: 'var(--color-text-muted)' }}>Generating structured statements via AI...</div>
+                                        </div>
+                                    ) : (
+                                        quizQuestions.map((q, qIndex) => (
+                                            <div key={qIndex} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
+                                                <p style={{ margin: '0 0 1rem 0', fontWeight: 600, fontSize: '1.05rem', color: 'var(--color-text)' }}>
+                                                    {qIndex + 1}. {q}
+                                                </p>
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem' }}>
+                                                    {[
+                                                        { label: 'Strongly Agree', value: 10 },
+                                                        { label: 'Agree', value: 8 },
+                                                        { label: 'Neutral', value: 5 },
+                                                        { label: 'Disagree', value: 2 },
+                                                        { label: 'Strongly Disagree', value: 0 }
+                                                    ].map((opt, oIndex) => (
+                                                        <label key={oIndex} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.95rem' }}>
+                                                            <input 
+                                                                type="radio" 
+                                                                name={`question-${qIndex}`} 
+                                                                value={opt.value}
+                                                                checked={quizAnswers[qIndex] === opt.value}
+                                                                onChange={() => {
+                                                                    const newAns = [...quizAnswers];
+                                                                    newAns[qIndex] = opt.value;
+                                                                    setQuizAnswers(newAns);
+                                                                }}
+                                                            />
+                                                            {opt.label}
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            ) : submissionMode === 'text' ? (
                                 <div style={{ position: 'relative' }}>
                                     <textarea 
                                         className="form-control"
@@ -841,8 +972,10 @@ export const Assessment = () => {
                                             }}
                                             accept=".pdf,.js,.py,.jsx,.ts,.tsx,.java,.cpp,.cs,.html,.css"
                                         />
-                                        <label htmlFor="file-upload" style={{ marginTop: '0.5rem' }}>
-                                            <Button as="span" variant="outline" style={{ padding: '0.75rem 1.5rem' }}>Browse Files</Button>
+                                        <label htmlFor="file-upload" style={{ marginTop: '0.5rem', display: 'inline-block', padding: '0.75rem 1.75rem', background: 'var(--color-white)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600, color: 'var(--color-text)', transition: 'all 0.2s', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
+                                               onMouseOver={(e) => e.currentTarget.style.background = 'var(--color-bg-paper)'}
+                                               onMouseOut={(e) => e.currentTarget.style.background = 'var(--color-white)'}>
+                                            Browse Files
                                         </label>
                                     </div>
                                     
@@ -863,8 +996,24 @@ export const Assessment = () => {
                                 </div>
                             )}
 
-                            <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
-                                <Button className="btn-primary" style={{ padding: '0.75rem 2.5rem' }} onClick={handleSubmitAssessment} disabled={(submissionMode === 'text' && !submission.trim()) || (submissionMode === 'upload' && !selectedFile) || isSubmitting}>
+                            <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                {submissionMode === 'quiz' && !quizLoading ? (
+                                    <div style={{ fontSize: '1.1rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                                        {quizAnswers.filter(a => a !== null).length} / {quizQuestions.length} answered
+                                    </div>
+                                ) : <div />}
+                                
+                                <Button 
+                                    className="btn-primary" 
+                                    style={{ padding: '0.75rem 2.5rem' }} 
+                                    onClick={handleSubmitAssessment} 
+                                    disabled={
+                                        (submissionMode === 'quiz' && (quizLoading || quizAnswers.some(a => a === null))) || 
+                                        (submissionMode === 'text' && !submission.trim()) || 
+                                        (submissionMode === 'upload' && !selectedFile) || 
+                                        isSubmitting
+                                    }
+                                >
                                     {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> Processing...</> : 'Submit Assessment'}
                                 </Button>
                             </div>
@@ -926,7 +1075,8 @@ export const Assessment = () => {
                             <Button className="btn-primary" onClick={() => navigate('/assessment')}>Return to Hub</Button>
                         </div>
                     </div>
-                )}
+                    );
+                })()}
             </div>
         </DashboardLayout>
     );

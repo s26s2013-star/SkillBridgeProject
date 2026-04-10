@@ -32,6 +32,11 @@ class AssessmentSubmission(BaseModel):
     submission: str
     expected_keywords: List[str] = []
 
+class QuizSubmission(BaseModel):
+    email: str
+    skill_name: str
+    answers: List[int]
+
 class AssessmentResult(BaseModel):
     userId: str
     skillId: str
@@ -510,3 +515,121 @@ def get_user_assessments(userId: str):
     for r in records:
         r["_id"] = str(r["_id"])
     return records
+
+@app.get("/api/assessment/quiz-questions")
+async def get_quiz_questions(skill_name: str, category: str = "Technical"):
+    import os
+    import json
+    
+    db = get_db()
+    quizzes_collection = db["skill_quizzes"]
+    
+    existing_quiz = quizzes_collection.find_one({"skill_name": {"$regex": f"^{skill_name}$", "$options": "i"}})
+    
+    if existing_quiz and "questions" in existing_quiz and len(existing_quiz["questions"]) == 10:
+        return {"skill_name": skill_name, "questions": existing_quiz["questions"]}
+        
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        dummy = [f"I have a reliable understanding of {skill_name} fundamentals." for i in range(10)]
+        return {"skill_name": skill_name, "questions": dummy}
+        
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        type_instruction = ""
+        example_instruction = ""
+        if category.lower() == "soft":
+            type_instruction = "This is a SOFT skill. The statements must focus on behavior, situational awareness, interpersonal dynamics, and communication."
+            example_instruction = '["I actively listen to colleagues to ensure I fully understand their perspective before responding.", "I navigate miscommunications constructively without assigning blame."]'
+        else:
+            type_instruction = "This is a TECHNICAL skill. The statements must focus on practical logic, tool understanding, debugging ability, and technical execution."
+            example_instruction = f'["I can comfortably debug complex logic issues in {skill_name}.", "I understand and apply industry standard best practices when utilizing {skill_name}."]'
+        
+        prompt = f"""
+Generate exactly 10 UNIQUE, non-repetitive self-assessment statements evaluating proficiency in the skill: '{skill_name}'.
+{type_instruction}
+The statements should be written in the first person (e.g., "I can...", "I do...").
+They must scale from beginner fundamentals to advanced concepts to accurately test depth of knowledge. Do not use generic filler questions.
+Return ONLY a raw JSON array of exactly 10 strings. No markdown, no HTML, no extra text.
+Example format:
+{example_instruction}
+"""
+        response = model.generate_content(prompt)
+        raw_text = response.text.replace('```json', '').replace('```', '').strip()
+        questions = json.loads(raw_text)
+        
+        if len(questions) < 10:
+            while len(questions) < 10:
+                questions.append(f"I am comfortable applying {skill_name} in practical scenarios {len(questions)+1}.")
+        elif len(questions) > 10:
+            questions = questions[:10]
+            
+        quizzes_collection.insert_one({"skill_name": skill_name, "questions": questions})
+        return {"skill_name": skill_name, "questions": questions}
+        
+    except Exception as e:
+        print(f"Error generating quiz: {e}")
+        dummy = [f"I have practical experience with core mechanics of {skill_name}." for i in range(10)]
+        return {"skill_name": skill_name, "questions": dummy}
+
+@app.post("/api/user/assessment/quiz_evaluate")
+async def evaluate_quiz_submission(data: QuizSubmission):
+    db = get_db()
+    users_collection = db["users"]
+    
+    user = users_collection.find_one({"email": data.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    scores = data.answers
+    if not isinstance(scores, list) or len(scores) != 10:
+        scores = [0] * 10
+        
+    total_score = sum(scores)
+    total_score = min(max(total_score, 0), 100)
+    
+    is_valid = total_score >= 60
+    status = "Verified" if is_valid else "Pending"
+    calculated_level = "Advanced" if total_score >= 85 else ("Intermediate" if total_score >= 60 else "Beginner")
+    
+    suggestion = f"Completed 10-statement AI Quiz. Score calculated natively based on weighted responses."
+    
+    skills = user.get("skills", [])
+    updated = False
+    for i, s in enumerate(skills):
+        s_name = s if isinstance(s, str) else s.get("name", "")
+        if s_name.lower() == data.skill_name.lower():
+            if isinstance(s, str):
+                skills[i] = {
+                    "name": s, "status": status, "progress": total_score,
+                    "level": calculated_level, "suggestion": suggestion
+                }
+            else:
+                current_skill = dict(s)
+                current_skill.update({
+                    "status": status,
+                    "progress": total_score,
+                    "level": calculated_level,
+                    "suggestion": suggestion
+                })
+                skills[i] = current_skill
+            updated = True
+            break
+            
+    if not updated:
+        skills.append({
+            "name": data.skill_name, "status": status, "progress": total_score,
+            "level": calculated_level, "suggestion": suggestion
+        })
+
+    users_collection.update_one({"email": data.email}, {"$set": {"skills": skills}})
+    
+    return {
+        "status": status, 
+        "suggestion": suggestion, 
+        "score": total_score, 
+        "level": calculated_level
+    }
