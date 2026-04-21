@@ -77,7 +77,7 @@ export const Profile = () => {
         };
 
         Promise.all([fetchProfile(), fetchSkillsFromDB()]).finally(() => setLoading(false));
-    }, [navigate]);
+    }, [navigate, user]);
 
     const handleLogout = () => {
         authService.logout();
