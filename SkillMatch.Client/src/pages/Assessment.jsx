@@ -8,6 +8,7 @@ import {
     FileText, Loader2, Sparkles, Lightbulb, Plus, Clock, Info, Trash2
 } from 'lucide-react';
 import { getEvaluationForSkill, getShortEvaluationForSkill } from '../data/evaluationQuestions';
+import { getTechCaseStudyPrompt } from '../data/techCaseStudyPrompts';
 
 export const Assessment = () => {
     const navigate = useNavigate();
@@ -45,6 +46,17 @@ export const Assessment = () => {
     const [quizAnswers, setQuizAnswers] = useState(new Array(10).fill(null));
     const [quizLoading, setQuizLoading] = useState(false);
 
+    // === NEW TECHNICAL ASSESSMENT STATE ===
+    const [techFlowActive, setTechFlowActive] = useState(false);
+    const [techQuestions, setTechQuestions] = useState([]);
+    const [currentTechIdx, setCurrentTechIdx] = useState(0);
+    const [techAnswers, setTechAnswers] = useState({}); // { question_number: selected_option_text }
+    const [techResult, setTechResult] = useState(null);
+    const [techLoading, setTechLoading] = useState(false);
+    const [activeTechSkill, setActiveTechSkill] = useState("");
+    const [caseStudyText, setCaseStudyText] = useState("");
+    const [caseStudyFile, setCaseStudyFile] = useState(null);
+
     useEffect(() => {
         if (!user || !user.email) {
             navigate('/login');
@@ -80,9 +92,15 @@ export const Assessment = () => {
                     console.log(`[Assessment] Skills for "${pulledMajor}":`, specializedSkills.length, specializedSkills.map(s => s.skill_name));
                 }
 
-                // Merge: use specializedSkills for the modal, allDbSkills for detail lookups
-                // Store both lists in state
-                setDbSkillsList(specializedSkills.length > 0 ? specializedSkills : allDbSkills);
+                // Merge: use specializedSkills for the modal if major is set
+                // Store in state
+                if (pulledMajor && pulledMajor !== 'Not specified') {
+                    setDbSkillsList(specializedSkills);
+                    console.log(`[Assessment] Loaded ${specializedSkills.length} skills for major: ${pulledMajor}`);
+                } else {
+                    setDbSkillsList(allDbSkills);
+                    console.log("[Assessment] No major detected, falling back to all skills");
+                }
 
                 const formattedUserSkills = userSkillNames.map((skillObj, index) => {
                     const skillName = typeof skillObj === 'string' ? skillObj : skillObj.name;
@@ -244,6 +262,142 @@ export const Assessment = () => {
         setSkills(newSkillsList);
         setShortTestResult(skillToAdd);
         setActiveShortTest(null);
+    };
+
+    // --- NEW TECHNICAL ASSESSMENT FUNCTIONS ---
+    const startTechnicalAssessment = async (skillName) => {
+        setTechLoading(true);
+        setActiveTechSkill(skillName);
+        try {
+            const majorParam = userMajor ? `&major=${encodeURIComponent(userMajor)}` : '';
+            const res = await fetch(`http://127.0.0.1:8000/api/technical-questions?skill_name=${encodeURIComponent(skillName)}${majorParam}`);
+            const data = await res.json();
+            if (data.questions && data.questions.length > 0) {
+                setTechQuestions(data.questions);
+                setCurrentTechIdx(0);
+                setTechAnswers({});
+                setTechResult(null);
+                setTechFlowActive(true);
+            } else {
+                alert("No questions found for this skill.");
+            }
+        } catch (error) {
+            console.error("Error fetching technical questions:", error);
+        } finally {
+            setTechLoading(false);
+        }
+    };
+
+    const submitTechnicalAssessment = async () => {
+        setTechLoading(true);
+        try {
+            const payload = {
+                major: userMajor,
+                skill_name: activeTechSkill,
+                answers: Object.entries(techAnswers).map(([num, text]) => ({
+                    question_number: parseInt(num),
+                    selected_option_text: text
+                }))
+            };
+
+            const res = await fetch('http://127.0.0.1:8000/api/technical-assessment/score', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const rubricData = await res.json();
+            
+            // 2. Submit Case Study
+            const formData = new FormData();
+            formData.append('skill_name', activeTechSkill);
+            formData.append('case_study_text', caseStudyText);
+            if (caseStudyFile) {
+                formData.append('file', caseStudyFile);
+            }
+
+            const caseStudyRes = await fetch('http://127.0.0.1:8000/api/technical-assessment/case-study', {
+                method: 'POST',
+                body: formData
+            });
+            const caseStudyData = await caseStudyRes.json();
+
+            // 3. Calculate Final Score: (Rubric % + Case Study %) / 2
+            const rubricPercentage = rubricData.percentage || 0;
+            const caseStudyPercentage = caseStudyData.case_study_percentage || 0;
+            const finalPercentage = (rubricPercentage + caseStudyPercentage) / 2;
+
+            // Determine final level based on the final percentage
+            let finalLevel = "Beginner";
+            if (finalPercentage >= 85) finalLevel = "Advanced";
+            else if (finalPercentage >= 60) finalLevel = "Intermediate";
+
+            const finalResult = {
+                ...rubricData,
+                rubric_percentage: rubricPercentage || 0,
+                case_study_percentage: caseStudyPercentage || 0,
+                percentage: round(finalPercentage, 2) || 0,
+                level: finalLevel || "Beginner",
+                feedback: caseStudyData.feedback || "No feedback provided.",
+                problem_identification: caseStudyData.problem_identification || 0,
+                solution_appropriateness: caseStudyData.solution_appropriateness || 0,
+                technical_depth: caseStudyData.technical_depth || 0,
+                practical_application: caseStudyData.practical_application || 0,
+                clarity_and_evidence: caseStudyData.clarity_and_evidence || 0
+            };
+
+            setTechResult(finalResult);
+
+            // 4. Save to Profile
+            let newSkillsList = [...skills];
+            const skillToAdd = {
+                name: activeTechSkill,
+                progress: round(finalPercentage, 2),
+                status: finalPercentage >= 60 ? 'Verified' : 'Pending',
+                level: finalLevel,
+                category: 'Technical',
+                description: `Averaged score from structured rubric (${rubricPercentage}%) and AI case study (${caseStudyPercentage}%).`,
+                components: []
+            };
+
+            newSkillsList = newSkillsList.filter(s => s.name.toLowerCase() !== activeTechSkill.toLowerCase());
+            newSkillsList = [skillToAdd, ...newSkillsList];
+            
+            setSkills(newSkillsList);
+            await saveSkillsToProfile(newSkillsList.map(s => ({
+                name: s.name, level: s.level, progress: s.progress, status: s.status,
+                description: s.description, components: s.components, category: s.category
+            })));
+
+            // Save result record
+            try {
+                await fetch('http://127.0.0.1:8000/api/assessment/result', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        userId: user?.id || user?.email || "unknown",
+                        skillId: activeTechSkill,
+                        skillName: activeTechSkill,
+                        category: 'Technical',
+                        answers: `Final Score: ${round(finalPercentage, 2)}%`,
+                        aiScore: round(finalPercentage, 2),
+                        level: finalLevel,
+                        status: "completed",
+                        completedAt: new Date().toISOString()
+                    })
+                });
+            } catch (e) {
+                console.error("Failed to save result record:", e);
+            }
+
+        } catch (error) {
+            console.error("Error submitting technical assessment:", error);
+        } finally {
+            setTechLoading(false);
+        }
+    };
+
+    const round = (num, decimals) => {
+        return Math.round((num + Number.EPSILON) * Math.pow(10, decimals)) / Math.pow(10, decimals);
     };
 
 
@@ -462,10 +616,185 @@ export const Assessment = () => {
                             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
                                 <div className="animate-fade-in" style={{ backgroundColor: 'var(--color-bg)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
                                     <h3 style={{ fontSize: '1.5rem', marginBottom: '1.5rem', color: 'var(--color-primary)' }}>
-                                        {shortTestResult ? 'Assessment Complete' : activeShortTest ? `AI Assessment: ${activeShortTest.name}` : 'Add New Skills'}
+                                        {techResult ? 'Assessment Results' : techFlowActive ? `Skill Assessment: ${activeTechSkill}` : shortTestResult ? 'Assessment Complete' : activeShortTest ? `AI Assessment: ${activeShortTest.name}` : 'Add New Skills'}
                                     </h3>
                                     
-                                    {shortTestResult ? (
+                                    {techResult ? (
+                                        <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+                                            <div style={{ 
+                                                width: '100%', maxWidth: '400px', margin: '0 auto', background: 'var(--color-bg-paper)', 
+                                                padding: '2.5rem 2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)',
+                                                boxShadow: 'var(--shadow-sm)'
+                                            }}>
+                                                <div style={{ color: 'var(--color-primary)', fontSize: '0.875rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
+                                                    {activeTechSkill}
+                                                </div>
+                                                <div style={{ fontSize: '1.5rem', fontWeight: '600', color: 'var(--color-text)', marginBottom: '0.5rem' }}>Your Score</div>
+                                                <div style={{ fontSize: '3.5rem', fontWeight: '800', color: 'var(--color-primary)', marginBottom: '0.5rem', lineHeight: 1 }}>
+                                                    {techResult.total_score}<span style={{ fontSize: '1.5rem', color: 'var(--color-text-muted)', fontWeight: '400' }}>/9</span>
+                                                </div>
+                                                <div style={{ fontSize: '1.25rem', fontWeight: '600', color: 'var(--color-text)', marginBottom: '1.5rem' }}>
+                                                    Combined: {techResult.percentage}%
+                                                </div>
+                                                
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem', textAlign: 'left' }}>
+                                                    <div style={{ background: 'var(--color-bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}>
+                                                        <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: '700', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Rubric</div>
+                                                        <div style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--color-text)' }}>{techResult.rubric_percentage || 0}%</div>
+                                                    </div>
+                                                    <div style={{ background: 'var(--color-bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}>
+                                                        <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: '700', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Case Study</div>
+                                                        <div style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--color-text)' }}>{techResult.case_study_percentage || 0}%</div>
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ 
+                                                    display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.5rem', 
+                                                    background: 'var(--color-white)', borderRadius: 'var(--radius-full)', border: '1px solid var(--color-border)',
+                                                    fontWeight: '700', color: 'var(--color-text)', marginBottom: '1rem'
+                                                }}>
+                                                    Assessed Level: {techResult.level || "Beginner"}
+                                                </div>
+
+                                                {techResult.feedback && (
+                                                    <div style={{ textAlign: 'left', marginTop: '1rem', padding: '1rem', background: 'rgba(59, 130, 246, 0.03)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+                                                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--color-primary)', textTransform: 'uppercase', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                            <Sparkles size={14} /> AI Feedback
+                                                        </div>
+                                                        <p style={{ margin: 0, fontSize: '0.875rem', lineHeight: 1.5, color: 'var(--color-text-muted)' }}>
+                                                            {techResult.feedback}
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div style={{ marginTop: '2.5rem', display: 'flex', justifyContent: 'center' }}>
+                                                <Button onClick={() => {
+                                                    setTechResult(null);
+                                                    setTechFlowActive(false);
+                                                    setIsModalOpen(false);
+                                                }} style={{ padding: '0.75rem 2.5rem' }}>
+                                                    Close & Save
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ) : techFlowActive ? (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                            {techLoading ? (
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '3rem' }}>
+                                                    <Loader2 className="animate-spin" size={32} color="var(--color-primary)" />
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                                        <span style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', fontWeight: '600' }}>
+                                                            {currentTechIdx < techQuestions.length 
+                                                                ? `Rubric Question ${currentTechIdx + 1} of ${techQuestions.length}`
+                                                                : `Final Step: Case Study Evaluation`}
+                                                        </span>
+                                                        <div style={{ height: '6px', background: 'var(--color-border)', borderRadius: 'var(--radius-full)', width: '100px', overflow: 'hidden' }}>
+                                                            <div style={{ height: '100%', background: 'var(--color-primary)', width: `${((currentTechIdx + 1) / (techQuestions.length + 1)) * 100}%`, transition: 'width 0.3s ease' }}></div>
+                                                        </div>
+                                                    </div>
+
+                                                    {currentTechIdx < techQuestions.length ? (
+                                                        <>
+                                                            <div style={{ background: 'var(--color-bg-paper)', padding: '2rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+                                                                <p style={{ margin: 0, fontSize: '1.125rem', fontWeight: '600', color: 'var(--color-text)', lineHeight: 1.6 }}>
+                                                                    {techQuestions[currentTechIdx]?.question_text}
+                                                                </p>
+                                                            </div>
+
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                                                {techQuestions[currentTechIdx]?.options.map((option, idx) => (
+                                                                    <label 
+                                                                        key={idx} 
+                                                                        style={{ 
+                                                                            display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '1.25rem', 
+                                                                            borderRadius: 'var(--radius-sm)', border: techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text ? '2px solid var(--color-primary)' : '1px solid var(--color-border)', 
+                                                                            background: techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text ? 'rgba(59, 130, 246, 0.05)' : 'var(--color-white)', cursor: 'pointer', transition: 'all 0.2s' 
+                                                                        }}
+                                                                    >
+                                                                        <input 
+                                                                            type="radio" 
+                                                                            name={`tech_option_${currentTechIdx}`}
+                                                                            checked={techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text}
+                                                                            onChange={() => setTechAnswers(prev => ({...prev, [techQuestions[currentTechIdx].question_number]: option.option_text}))}
+                                                                            style={{ width: '1.1rem', height: '1.1rem', accentColor: 'var(--color-primary)' }}
+                                                                        />
+                                                                        <span style={{ fontSize: '1rem', color: 'var(--color-text)' }}>{option.option_text}</span>
+                                                                    </label>
+                                                                ))}
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                                            <div style={{ background: 'rgba(59, 130, 246, 0.05)', padding: '1.5rem', borderRadius: 'var(--radius-md)', borderLeft: '4px solid var(--color-primary)' }}>
+                                                                <h5 style={{ margin: '0 0 0.5rem 0', color: 'var(--color-primary)' }}>Problem Scenario Answer</h5>
+                                                                <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--color-text-muted)', lineHeight: '1.6' }}>
+                                                                    <strong>{activeTechSkill}: </strong> {getTechCaseStudyPrompt(activeTechSkill)}
+                                                                    <br /><br />
+                                                                    You may optionally upload supporting diagrams or code.
+                                                                </p>
+                                                            </div>
+
+                                                            <textarea
+                                                                placeholder="Describe your technical approach and reasoning here..."
+                                                                value={caseStudyText}
+                                                                onChange={(e) => setCaseStudyText(e.target.value)}
+                                                                style={{ 
+                                                                    width: '100%', minHeight: '180px', padding: '1rem', borderRadius: 'var(--radius-md)', 
+                                                                    border: '1px solid var(--color-border)', fontSize: '1rem', lineHeight: 1.6,
+                                                                    resize: 'vertical'
+                                                                }}
+                                                            />
+
+                                                            <div style={{ border: '1px dashed var(--color-border)', padding: '1.5rem', borderRadius: 'var(--radius-md)', textAlign: 'center', background: 'var(--color-white)' }}>
+                                                                <input 
+                                                                    type="file" 
+                                                                    id="caseStudyUpload" 
+                                                                    style={{ display: 'none' }} 
+                                                                    onChange={(e) => setCaseStudyFile(e.target.files[0])}
+                                                                />
+                                                                <label htmlFor="caseStudyUpload" style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+                                                                    <UploadCloud size={32} color="var(--color-text-muted)" />
+                                                                    <span style={{ fontSize: '0.9rem', color: 'var(--color-text)' }}>
+                                                                        {caseStudyFile ? caseStudyFile.name : 'Upload supporting evidence (Optional)'}
+                                                                    </span>
+                                                                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>PDF, Image, or Text file</span>
+                                                                </label>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginTop: '1.5rem' }}>
+                                                        <Button 
+                                                            variant="outline" 
+                                                            onClick={() => setCurrentTechIdx(prev => Math.max(0, prev - 1))}
+                                                            disabled={currentTechIdx === 0}
+                                                        >
+                                                            Previous
+                                                        </Button>
+                                                        
+                                                        {currentTechIdx === techQuestions.length ? (
+                                                            <Button 
+                                                                onClick={submitTechnicalAssessment}
+                                                                disabled={!caseStudyText.trim() || techLoading}
+                                                            >
+                                                                {techLoading ? <Loader2 className="animate-spin" size={18} /> : 'Submit Full Assessment'}
+                                                            </Button>
+                                                        ) : (
+                                                            <Button 
+                                                                onClick={() => setCurrentTechIdx(prev => prev + 1)}
+                                                                disabled={!techAnswers[techQuestions[currentTechIdx].question_number]}
+                                                            >
+                                                                Next
+                                                            </Button>
+                                                        )}
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    ) : shortTestResult ? (
                                         <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
                                             <CheckCircle2 size={48} color="var(--color-success)" style={{ margin: '0 auto 1.5rem auto' }} />
                                             <div style={{ background: 'var(--color-bg-paper)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', margin: '1.5rem 0' }}>
@@ -566,25 +895,22 @@ export const Assessment = () => {
                                                                 </div>
                                                                 
                                                                 <div>
-                                                                    <p style={{ fontSize: '0.95rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>Select a technical skill to take a short placement test.</p>
+                                                                    <p style={{ fontSize: '0.95rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>Select a technical skill to begin the assessment flow.</p>
                                                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.85rem' }}>
-                                                                        {availableSkills.map(skill => {
-                                                                            const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === skill.skill_name.toLowerCase());
+                                                                        {dbSkillsList.map(skill => {
+                                                                            const skillName = skill.skill_name || skill.name;
+                                                                            const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === skillName.toLowerCase());
                                                                             return (
                                                                                 <button 
-                                                                                    key={skill.skill_name} 
-                                                                                    onClick={() => !isAlreadyOwned && startShortTest(skill.skill_name, skill.category)}
-                                                                                    disabled={isAlreadyOwned}
-                                                                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '1rem', background: 'var(--color-white)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', cursor: isAlreadyOwned ? 'not-allowed' : 'pointer', opacity: isAlreadyOwned ? 0.6 : 1, textAlign: 'left', width: '100%', transition: 'border 0.2s' }}
+                                                                                    key={skillName} 
+                                                                                    onClick={() => startTechnicalAssessment(skillName)}
+                                                                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '1rem', background: 'var(--color-white)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'border 0.2s' }}
                                                                                 >
-                                                                                    <span style={{ fontSize: '0.95rem', fontWeight: '500', color: 'var(--color-text)' }}>{skill.skill_name}</span>
-                                                                                    {isAlreadyOwned ? <CheckCircle2 size={16} color="var(--color-success)" /> : <ChevronLeft size={16} style={{ transform: 'rotate(180deg)', color: 'var(--color-primary)' }} />}
+                                                                                    <span style={{ fontSize: '0.95rem', fontWeight: '500', color: 'var(--color-text)' }}>{skillName}</span>
+                                                                                    <ChevronLeft size={16} style={{ transform: 'rotate(180deg)', color: 'var(--color-primary)' }} />
                                                                                 </button>
                                                                             );
                                                                         })}
-                                                                        {availableSkills.length === 0 && (
-                                                                            <span style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>No skills found for your specialization.</span>
-                                                                        )}
                                                                     </div>
                                                                 </div>
                                                             </>

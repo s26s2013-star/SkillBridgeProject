@@ -1,9 +1,12 @@
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from datetime import datetime
 from pydantic import BaseModel
 from typing import Any, Dict, Optional, List
 from fastapi.middleware.cors import CORSMiddleware
 from database import get_db
+import random
 
 class UserRegister(BaseModel):
     name: str
@@ -46,6 +49,20 @@ class AssessmentResult(BaseModel):
     completedAt: str
 
 app = FastAPI()
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    import json
+    body = await request.body()
+    print(f"\n--- 422 Validation Error ---")
+    print(f"Path: {request.url.path}")
+    print(f"Errors: {json.dumps(exc.errors(), indent=2)}")
+    print(f"Body: {body.decode('utf-8', errors='ignore')}")
+    print(f"---------------------------\n")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body_received": body.decode('utf-8', errors='ignore')},
+    )
 
 # Configure CORS
 origins = [
@@ -633,3 +650,216 @@ async def evaluate_quiz_submission(data: QuizSubmission):
         "score": total_score, 
         "level": calculated_level
     }
+
+@app.get("/api/technical-questions")
+def get_technical_questions(skill_name: str, major: Optional[str] = None):
+    db = get_db()
+    tech_qs_collection = db["technical_questions"]
+    
+    query = {"skill_name": {"$regex": f"^{skill_name.strip()}$", "$options": "i"}}
+    if major:
+        query["major"] = {"$regex": f"^{major.strip()}$", "$options": "i"}
+        
+    questions_cursor = tech_qs_collection.find(query).sort("question_number", 1).limit(3)
+    
+    questions_list = []
+    for q in questions_cursor:
+        safe_options = []
+        for opt in q.get("options", []):
+            safe_options.append({
+                "option_text": opt.get("option_text", "")
+            })
+        random.shuffle(safe_options)
+            
+        questions_list.append({
+            "skill_name": q.get("skill_name"),
+            "question_number": q.get("question_number"),
+            "question_text": q.get("question_text"),
+            "options": safe_options
+        })
+        
+    return {"skill_name": skill_name, "questions": questions_list}
+
+class TechAssessmentAnswer(BaseModel):
+    question_number: int
+    selected_option_text: str
+
+class TechAssessmentSubmission(BaseModel):
+    major: Optional[str] = None
+    skill_name: str
+    answers: List[TechAssessmentAnswer]
+
+@app.post("/api/technical-assessment/score")
+def score_technical_assessment(submission: TechAssessmentSubmission):
+    db = get_db()
+    tech_qs_collection = db["technical_questions"]
+    
+    # 1. Validation: Reject if answers are not exactly 3
+    if len(submission.answers) != 3:
+        raise HTTPException(status_code=400, detail="Exactly 3 answers must be provided.")
+        
+    # 2. Validation: Reject duplicate question_number
+    req_question_numbers = [ans.question_number for ans in submission.answers]
+    if len(set(req_question_numbers)) != 3:
+        raise HTTPException(status_code=400, detail="Answers contain duplicate question numbers.")
+        
+    query = {"skill_name": {"$regex": f"^{submission.skill_name.strip()}$", "$options": "i"}}
+    if submission.major and submission.major.strip():
+        query["major"] = {"$regex": f"^{submission.major.strip()}$", "$options": "i"}
+        
+    # 3. Read the questions for that skill
+    questions_cursor = list(tech_qs_collection.find(query))
+    
+    # 4. Validation: Reject if the skill does not have exactly 3 questions
+    if len(questions_cursor) != 3:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"This skill requires exactly 3 questions in the catalog, but {len(questions_cursor)} were found."
+        )
+        
+    total_score = 0
+    per_question_scores = []
+    
+    # 5. Logical scoring
+    for ans in submission.answers:
+        matched_q = next((q for q in questions_cursor if q.get("question_number") == ans.question_number), None)
+        if not matched_q:
+            raise HTTPException(status_code=400, detail=f"Invalid question number: {ans.question_number}")
+            
+        # 6. Validation: Match selected_option_text with stored options
+        matched_opt = next((o for o in matched_q.get("options", []) if o.get("option_text") == ans.selected_option_text), None)
+        if not matched_opt:
+            raise HTTPException(status_code=400, detail=f"Invalid option text for question {ans.question_number}")
+            
+        score = int(matched_opt.get("score", 1))
+        total_score += score
+        per_question_scores.append({
+            "question_number": ans.question_number, 
+            "selected_option_text": ans.selected_option_text,
+            "score": score
+        })
+        
+    max_score = 9
+    percentage = (total_score / max_score) * 100
+    
+    # 7. Level mapping based on total_score
+    if 1 <= total_score <= 3:
+        level = "Beginner"
+    elif 4 <= total_score <= 6:
+        level = "Intermediate"
+    elif 7 <= total_score <= 9:
+        level = "Advanced"
+    else:
+        # Fallback for 0 or unexpected values
+        level = "Beginner"
+        
+    # 8. Optimized Response
+    return {
+        "major": submission.major or matched_q.get("major", "Cloud Computing"),
+        "skill_name": submission.skill_name,
+        "total_score": total_score,
+        "max_score": max_score,
+        "percentage": round(percentage, 2),
+        "level": level,
+        "per_question_scores": per_question_scores
+    }
+
+@app.post("/api/technical-assessment/case-study")
+async def evaluate_case_study(
+    skill_name: str = Form(...),
+    case_study_text: str = Form(...),
+    file: Optional[UploadFile] = File(None)
+):
+    import os
+    import json
+    import re
+    
+    # Generic fallback response
+    fallback_response = {
+        "problem_identification": 12,
+        "solution_appropriateness": 12,
+        "technical_depth": 12,
+        "practical_application": 12,
+        "clarity_and_evidence": 12,
+        "case_study_percentage": 60,
+        "level": "Beginner",
+        "feedback": "AI evaluation skipped or encountered an error. Default values applied."
+    }
+    
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return fallback_response
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        file_content = ""
+        if file:
+            try:
+                contents = await file.read()
+                file_content = f"\n\n--- Supporting Evidence File Content ---\n{contents.decode('utf-8', errors='ignore')}"
+            except Exception as e:
+                print(f"File read error: {e}")
+
+        prompt = f"""
+        You are a senior technical architect. Evaluate the following case study answer for the skill: {skill_name}.
+        
+        Answer Text:
+        {case_study_text}
+        {file_content}
+        
+        Evaluate the submission against these 5 criteria (max 20 points each):
+        1. problem_identification: Did they accurately define the technical challenge?
+        2. solution_appropriateness: Is the proposed solution logical and correct?
+        3. technical_depth: Did they show deep understanding of the concepts?
+        4. practical_application: Is it a realistic, implementable approach?
+        5. clarity_and_evidence: Is the answer well-structured and supported (even if no file was uploaded)?
+        
+        Important: Do NOT penalize the user simply for not uploading a file. If the text answer is strong and articulate, they can still score highly on 'clarity_and_evidence'.
+        
+        Return ONLY a raw JSON object with NO markdown formatting, NO backticks, NO extra text.
+        Schema:
+        {{
+          "problem_identification": integer(0-20),
+          "solution_appropriateness": integer(0-20),
+          "technical_depth": integer(0-20),
+          "practical_application": integer(0-20),
+          "clarity_and_evidence": integer(0-20),
+          "case_study_percentage": integer(0-100),
+          "level": "Beginner" | "Intermediate" | "Advanced",
+          "feedback": "string"
+        }}
+        """
+        response = model.generate_content(prompt)
+        text = response.text
+        
+        # Robust JSON extraction: Find first '{' and last '}'
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if not json_match:
+            raise ValueError("No JSON object found in AI response")
+            
+        raw_json = json_match.group(0)
+        ai_data = json.loads(raw_json)
+        
+        # Validation and normalization
+        output = {
+            "problem_identification": int(ai_data.get("problem_identification", 0)),
+            "solution_appropriateness": int(ai_data.get("solution_appropriateness", 0)),
+            "technical_depth": int(ai_data.get("technical_depth", 0)),
+            "practical_application": int(ai_data.get("practical_application", 0)),
+            "clarity_and_evidence": int(ai_data.get("clarity_and_evidence", 0)),
+            "case_study_percentage": int(ai_data.get("case_study_percentage", 0)),
+            "level": ai_data.get("level", "Beginner"),
+            "feedback": ai_data.get("feedback", "No feedback provided.")
+        }
+        
+        return output
+
+    except Exception as e:
+        print(f"Case Study evaluation error: {e}")
+        error_msg = str(e)
+        fallback = dict(fallback_response)
+        fallback["feedback"] = f"AI Evaluation encountered an error: {error_msg}. Default score applied."
+        return fallback
