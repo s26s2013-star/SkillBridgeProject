@@ -1,0 +1,773 @@
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from datetime import datetime
+from pydantic import BaseModel
+from typing import Any, Dict, Optional, List
+from fastapi.middleware.cors import CORSMiddleware
+from database import get_db
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+import io
+import PyPDF2
+import docx
+import logging
+import os
+from dotenv import load_dotenv
+from upskill_service import generate_upskill_plan
+
+# Load environment variables from .env file
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+logger.info("Loading SentenceTransformer model...")
+model = SentenceTransformer('all-MiniLM-L6-v2')
+logger.info("SentenceTransformer model loaded successfully.")
+
+class UserRegister(BaseModel):
+    name: str
+    email: str
+    password: str
+    major: str = ""
+    role: str = "student"
+    skills: List[Any] = []
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class UserProfileUpdate(BaseModel):
+    email: str
+    name: str
+    major: str = ""
+    experience: int = 0
+    location: str = ""
+    open_to_relocate: bool = False
+    job_type: str = ""
+    skills: List[Any] = []
+
+class AssessmentSubmission(BaseModel):
+    email: str
+    skill_name: str
+    submission: str
+    expected_keywords: List[str] = []
+
+class AssessmentResult(BaseModel):
+    userId: str
+    skillId: str
+    answers: str
+    aiScore: int
+    status: str = "completed"
+    completedAt: str
+
+class UpskillPlanRequest(BaseModel):
+    email: str
+
+app = FastAPI()
+
+# Configure CORS
+origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:5174",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/api/skills")
+def get_skills(major: Optional[str] = None):
+    db = get_db()
+    skills_collection = db["skills"]
+    
+    query: Dict[str, Any] = {}
+    if major:
+        query["$or"] = [
+            {"major": {"$regex": major, "$options": "i"}},
+            {"skill_name": {"$regex": major, "$options": "i"}},
+            {"category": {"$regex": major, "$options": "i"}}
+        ]
+        
+    # Fetch all skills from the collection
+    skills_cursor = skills_collection.find(query)
+    
+    skills_list = []
+    for skill in skills_cursor:
+        # Convert _id from ObjectId to string to avoid JSON serialization error
+        skill["_id"] = str(skill["_id"])
+        skills_list.append(skill)
+        
+    return skills_list
+
+@app.get("/api/specializations")
+def get_specializations():
+    db = get_db()
+    skills_collection = db["skills"]
+    distinct_majors = skills_collection.distinct("major")
+    
+    clean_majors = []
+    for major in distinct_majors:
+        if isinstance(major, str) and major.strip():
+            trimmed = major.strip()
+            if trimmed not in clean_majors:
+                clean_majors.append(trimmed)
+                
+    return sorted(clean_majors)
+
+@app.get("/api/skills/by-specialization")
+def get_skills_by_specialization(major: str):
+    db = get_db()
+    skills_collection = db["skills"]
+    major_clean = major.strip()
+    
+    # Case-insensitive exact match on 'major' field only
+    query = {"major": {"$regex": f"^{major_clean}$", "$options": "i"}}
+    skills_cursor = skills_collection.find(query)
+    
+    skills_list = []
+    for skill in skills_cursor:
+        skill["_id"] = str(skill["_id"])
+        skills_list.append(skill)
+    
+    # Fallback: if nothing found with exact match, try contains match
+    if not skills_list:
+        query_fallback = {"major": {"$regex": major_clean, "$options": "i"}}
+        for skill in skills_collection.find(query_fallback):
+            skill["_id"] = str(skill["_id"])
+            skills_list.append(skill)
+        
+    return skills_list
+
+@app.get("/api/skills/for-user")
+def get_skills_for_user_optimized(email: str):
+    db = get_db()
+    
+    # 1. Fetch user to get major
+    user_doc = db["users"].find_one({"email": email.strip().lower()})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    major = user_doc.get("major", "").strip()
+    result = {"major": major, "skills": []}
+    
+    if not major or major == "Not specified":
+        return result
+        
+    # 2. Fetch specific fields for skills matching the major
+    query = {"major": {"$regex": f"^{major}$", "$options": "i"}}
+    skills_cursor = list(db["skills"].find(query))
+    
+    # Fallback partial match if exact match yields nothing
+    if not skills_cursor:
+        query_fallback = {"major": {"$regex": major, "$options": "i"}}
+        skills_cursor = list(db["skills"].find(query_fallback))
+        
+    # 3. Format into minimal optimized structure matching frontend requirements
+    for s in skills_cursor:
+        result["skills"].append({
+            "id": str(s["_id"]),
+            "name": s.get("skill_name", ""),
+            "type": s.get("category", "Technical"),
+            "shortDescription": s.get("beginner_criteria", ""),
+            "details": {
+                "importance": s.get("beginner_criteria", ""),
+                "intermediate": s.get("intermediate_criteria", ""),
+                "advanced": s.get("advanced_criteria", ""),
+                "components": s.get("key_components", []),
+                "assessment": s.get("assessment_description", ""),
+                "source": s.get("source", "")
+            }
+        })
+        
+    return result
+
+@app.get("/api/jobs")
+def get_jobs(industry: Optional[str] = None, category: Optional[str] = None):
+    db = get_db()
+    job_market_collection = db["job_market"]
+    
+    query: Dict[str, Any] = {}
+    
+    # Filter by industry if provided
+    if industry:
+        query["Industry"] = {"$regex": industry, "$options": "i"}
+        
+    # If the user specifically filters by 'category', we can try to match it against Job_Title, Industry, or Job_Type
+    if category:
+        query["$or"] = [
+            {"Industry": {"$regex": category, "$options": "i"}},
+            {"Job_Title": {"$regex": category, "$options": "i"}},
+            {"Job_Type": {"$regex": category, "$options": "i"}}
+        ]
+        
+    jobs_cursor = job_market_collection.find(query)
+    
+    jobs_list = []
+    for job in jobs_cursor:
+        job["_id"] = str(job["_id"])
+        jobs_list.append(job)
+        
+    return jobs_list
+
+@app.post("/api/register")
+def register_user(user: UserRegister):
+    db = get_db()
+    users_collection = db["users"]
+    
+    email_clean = user.email.lower().strip()
+    if users_collection.find_one({"email": email_clean}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+        
+    role_clean = user.role.lower().strip()
+    if role_clean in ["employer", "employee"]:
+        role_clean = "graduate"
+        
+    new_user = {
+        "name": user.name.strip(),
+        "email": email_clean,
+        "password": user.password,
+        "major": user.major.strip() if user.major and user.major.strip() else "Not specified",
+        "role": role_clean,
+        "location": "Not specified",
+        "experience": 0,
+        "job_type": "Not specified",
+        "skills": user.skills if user.skills else []
+    }
+    
+    result = users_collection.insert_one(new_user)
+    
+    return {
+        "message": "Registration successful", 
+        "user_id": str(result.inserted_id)
+    }
+
+@app.post("/api/login")
+def login_user(user: UserLogin):
+    db = get_db()
+    users_collection = db["users"]
+    
+    email_clean = user.email.lower().strip()
+    db_user = users_collection.find_one({"email": email_clean, "password": user.password})
+    
+    if not db_user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+    return {
+        "message": "Login successful",
+        "token": "dummy-jwt-token",
+        "user": {
+            "id": str(db_user["_id"]),
+            "name": db_user.get("name"),
+            "email": db_user.get("email"),
+            "major": db_user.get("major"),
+            "role": db_user.get("role", "student")
+        }
+    }
+
+@app.get("/api/user/profile")
+def get_user_profile(email: str):
+    db = get_db()
+    users_collection = db["users"]
+    
+    user = users_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    return {
+        "id": str(user["_id"]),
+        "name": user.get("name", ""),
+        "email": user.get("email", ""),
+        "major": user.get("major", ""),
+        "role": user.get("role", "student"),
+        "experience": user.get("experience", 0),
+        "location": user.get("location", ""),
+        "open_to_relocate": user.get("open_to_relocate", False),
+        "job_type": user.get("job_type", ""),
+        "skills": user.get("skills", [])
+    }
+
+@app.put("/api/user/profile")
+def update_user_profile(profile_update: UserProfileUpdate):
+    db = get_db()
+    users_collection = db["users"]
+    
+    user = users_collection.find_one({"email": profile_update.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    update_data = {
+        "name": profile_update.name,
+        "major": profile_update.major,
+        "experience": profile_update.experience,
+        "location": profile_update.location,
+        "open_to_relocate": profile_update.open_to_relocate,
+        "job_type": profile_update.job_type,
+        "skills": profile_update.skills
+    }
+    
+    users_collection.update_one({"email": profile_update.email}, {"$set": update_data})
+    
+    return {"message": "Profile updated successfully"}
+
+@app.post("/api/upskill-plan")
+def create_upskill_plan(req: UpskillPlanRequest):
+    db = get_db()
+    users_collection = db["users"]
+    
+    email_clean = req.email.lower().strip()
+    user = users_collection.find_one({"email": email_clean})
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # 1. Identify weak skills (progress < 70)
+    user_skills = user.get("skills", [])
+    weak_skills = []
+    for s in user_skills:
+        s_name = s.get("name") if isinstance(s, dict) else s
+        progress = s.get("progress", 0) if isinstance(s, dict) else 0
+        if progress < 70:
+            weak_skills.append(s_name)
+            
+    if not weak_skills:
+        # If no weak skills, provide a general upskill plan based on their major
+        major = user.get("major", "Technology")
+        weak_skills = [f"Advanced {major} Concepts", "Industry Best Practices", "System Design"]
+
+    # 2. Generate plan using service
+    plan = generate_upskill_plan(weak_skills)
+    
+    # 3. Cache in MongoDB
+    users_collection.update_one(
+        {"email": email_clean},
+        {"$set": {"upskill_plan": plan, "upskill_plan_generated_at": datetime.utcnow().isoformat()}}
+    )
+    
+    return plan
+
+@app.get("/api/upskill-plan")
+def get_upskill_plan_endpoint(email: str):
+    db = get_db()
+    users_collection = db["users"]
+    
+    email_clean = email.lower().strip()
+    user = users_collection.find_one({"email": email_clean})
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    plan = user.get("upskill_plan")
+    if not plan:
+        # If no plan exists, return empty or trigger a message
+        return {"message": "No upskill plan found. Please generate one.", "status": "empty"}
+        
+    return plan
+
+@app.post("/api/user/assessment")
+def submit_assessment(sub: AssessmentSubmission):
+    db = get_db()
+    users_collection = db["users"]
+    
+    user = users_collection.find_one({"email": sub.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Dynamic Heuristic Logic
+    submission_text = sub.submission.strip().lower()
+    char_count = len(submission_text)
+    
+    # Base score on length (up to 40%, expecting ~300 chars for a good answer)
+    length_score = min(40, int((char_count / 300) * 40)) if char_count > 0 else 0
+    
+    # Keyword score (up to 60%)
+    keyword_score = 0
+    matched_keywords = []
+    if sub.expected_keywords:
+        for kw in sub.expected_keywords:
+            if kw.lower() in submission_text:
+                matched_keywords.append(kw)
+        
+        match_ratio = len(matched_keywords) / len(sub.expected_keywords)
+        keyword_score = int(match_ratio * 60)
+    else:
+        keyword_score = 40 if char_count > 100 else 10
+        
+    total_score = length_score + keyword_score
+    
+    is_valid = total_score >= 60
+    status = "Verified" if is_valid else "Pending"
+    calculated_level = "Advanced" if total_score >= 85 else ("Intermediate" if total_score >= 60 else "Beginner")
+    
+    suggestion = f"Your proficiency score is {total_score}%. "
+    if not is_valid:
+        suggestion += "Keep practicing. Focus on providing more detailed, real-world examples in your answers."
+    else:
+        if matched_keywords:
+            suggestion += f"Great job! You demonstrated strong knowledge by covering key concepts like: {', '.join(matched_keywords[:3])}."
+        else:
+            suggestion += "Great job! You provided a solid, structurally sound answer."
+
+    skills = user.get("skills", [])
+    updated = False
+    for i, s in enumerate(skills):
+        s_name = s if isinstance(s, str) else s.get("name", "")
+        if s_name.lower() == sub.skill_name.lower():
+            if isinstance(s, str):
+                skills[i] = {
+                    "name": s, "status": status, "progress": total_score,
+                    "level": calculated_level, "suggestion": suggestion
+                }
+            else:
+                current_skill = dict(s)
+                current_skill.update({
+                    "status": status,
+                    "progress": total_score,
+                    "level": calculated_level,
+                    "suggestion": suggestion
+                })
+                skills[i] = current_skill
+            updated = True
+            break
+    
+    if not updated:
+        skills.append({
+            "name": sub.skill_name, "status": status, "progress": total_score,
+            "level": calculated_level, "suggestion": suggestion
+        })
+
+    users_collection.update_one({"email": sub.email}, {"$set": {"skills": skills}})
+    return {"status": status, "suggestion": suggestion, "score": total_score, "level": calculated_level}
+
+@app.post("/api/assessment/result")
+def save_short_assessment_result(result: AssessmentResult):
+    db = get_db()
+    assessments_collection = db["assessments"]
+    
+    doc = result.dict() if hasattr(result, 'dict') else result.model_dump()
+    assessments_collection.insert_one(doc)
+    return {"message": "Assessment saved successfully"}
+
+@app.post("/api/assessment/upload")
+async def upload_assessment_file(
+    userId: str = Form(...),
+    skillName: str = Form(...),
+    file: UploadFile = File(...)
+):
+    db = get_db()
+    uploads_collection = db["file_uploads"]
+    
+    file_info = {
+        "userId": userId,
+        "skill": skillName,
+        "file_name": file.filename,
+        "upload_date": datetime.utcnow().isoformat(),
+        "status": "uploaded"
+    }
+    
+    uploads_collection.insert_one(file_info)
+    return {"message": "File uploaded successfully", "file_name": file.filename}
+
+@app.post("/api/user/assessment/upload_evaluate")
+async def evaluate_uploaded_file(
+    email: str = Form(...),
+    skill_name: str = Form(...),
+    file: UploadFile = File(...)
+):
+    import os
+    import json
+    
+    db = get_db()
+    users_collection = db["users"]
+    
+    user = users_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    contents = await file.read()
+    
+    api_key = os.environ.get("GEMINI_API_KEY")
+    
+    total_score = 40
+    calculated_level = "Beginner"
+    suggestion = "AI evaluation skipped. No GEMINI_API_KEY found in the environment."
+    status = "Pending"
+    
+    if api_key:
+        try:
+            import google.generativeai as genai
+            
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Decode file contents safely
+            text_content = contents.decode('utf-8', errors='ignore')
+            
+            prompt = f"""
+You are an expert technical assessor.
+Evaluate the following work sample for the skill: {skill_name}.
+Read the uploaded file content and return your evaluation in a structured JSON format.
+
+{text_content}
+
+Return ONLY a valid JSON object matching this schema exactly, with NO markdown formatting, NO backticks, and NO extra text:
+{{
+  "score": integer between 0 and 100,
+  "level": "Beginner" or "Intermediate" or "Advanced",
+  "feedback": "A concise paragraph explaining strengths, weaknesses, and areas for improvement."
+}}
+"""
+            response = model.generate_content(prompt)
+            
+            # Clean possible markdown formatting
+            raw_text = response.text.replace('```json', '').replace('```', '').strip()
+            ai_data = json.loads(raw_text)
+            
+            total_score = int(ai_data.get("score", 40))
+            calculated_level = ai_data.get("level", "Beginner")
+            suggestion = ai_data.get("feedback", "AI evaluation completed.")
+            
+            total_score = min(max(total_score, 0), 100)
+            is_valid = total_score >= 60
+            status = "Verified" if is_valid else "Pending"
+            
+        except Exception as e:
+            suggestion = f"AI Evaluation encountered an error: {str(e)}"
+            total_score = 40
+            calculated_level = "Beginner"
+            status = "Pending"
+
+    skills = user.get("skills", [])
+    updated = False
+    for i, s in enumerate(skills):
+        s_name = s if isinstance(s, str) else s.get("name", "")
+        if s_name.lower() == skill_name.lower():
+            if isinstance(s, str):
+                skills[i] = {
+                    "name": s, "status": status, "progress": total_score,
+                    "level": calculated_level, "suggestion": suggestion
+                }
+            else:
+                current_skill = dict(s)
+                current_skill.update({
+                    "status": status,
+                    "progress": total_score,
+                    "level": calculated_level,
+                    "suggestion": suggestion
+                })
+                skills[i] = current_skill
+            updated = True
+            break
+            
+    if not updated:
+        skills.append({
+            "name": skill_name, "status": status, "progress": total_score,
+            "level": calculated_level, "suggestion": suggestion
+        })
+
+    users_collection.update_one({"email": email}, {"$set": {"skills": skills}})
+    
+    return {
+        "status": status, 
+        "suggestion": suggestion, 
+        "score": total_score, 
+        "level": calculated_level
+    }
+
+@app.get("/api/major-assessment")
+def get_major_assessment(major: str):
+    db = get_db()
+    assessment = db["major_assessments"].find_one({"major": {"$regex": f"^{major}$", "$options": "i"}})
+    
+    if not assessment:
+        # Fallback to a default if major not found exactly
+        assessment = db["major_assessments"].find_one({"major": "Software Engineering"})
+        
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Assessment not found for this major")
+        
+    return {
+        "major": assessment["major"],
+        "task_description": assessment["task_description"],
+        "skills_covered": assessment["skills_covered"]
+    }
+
+import pdfplumber
+
+async def extract_text_from_file(file: UploadFile):
+    filename = file.filename.lower()
+    contents = await file.read()
+    
+    if filename.endswith(".pdf"):
+        try:
+            # Use pdfplumber for robust extraction
+            with pdfplumber.open(io.BytesIO(contents)) as pdf:
+                text = ""
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                return text
+        except Exception as e:
+            logger.error(f"PDF extraction error with pdfplumber: {e}")
+            return ""
+            
+    if filename.endswith(".docx"):
+        try:
+            doc = docx.Document(io.BytesIO(contents))
+            return "\n".join([para.text for para in doc.paragraphs])
+        except Exception as e:
+            logger.error(f"DOCX extraction error: {e}")
+            return ""
+    
+    # Plain text
+    try:
+        return contents.decode("utf-8")
+    except UnicodeDecodeError:
+        return contents.decode("latin-1")
+    except Exception as e:
+        logger.error(f"Error decoding file: {e}")
+        return ""
+@app.post("/api/user/extract-skills")
+async def extract_skills_from_cv(file: UploadFile = File(...)):
+    db = get_db()
+    skills_collection = db["skills"]
+    
+    cv_text = await extract_text_from_file(file)
+    
+    # If extraction fails or text is empty, return empty list (no crash)
+    if not cv_text or not cv_text.strip():
+        logger.warning(f"Empty text extracted from {file.filename}")
+        return {"skills": []}
+    
+    # Clean text: remove non‑printable chars, normalize whitespace
+    import re
+    cv_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', cv_text)
+    cv_text = ' '.join(cv_text.split())
+    cv_text_lower = cv_text.lower()
+    
+    all_skills = list(skills_collection.find({}))
+    extracted_skills = []
+    
+    for skill in all_skills:
+        skill_name = skill.get("skill_name", "").lower()
+        keywords = skill.get("key_components", [])
+        
+        # Match if skill name or any keyword appears in CV text
+        if skill_name and skill_name in cv_text_lower:
+            extracted_skills.append({
+                "name": skill.get("skill_name"),
+                "category": skill.get("category", "Technical"),
+                "level": "Beginner",
+                "progress": 30,
+                "status": "Not tested"
+            })
+        else:
+            for kw in keywords:
+                if kw and kw.lower() in cv_text_lower:
+                    extracted_skills.append({
+                        "name": skill.get("skill_name"),
+                        "category": skill.get("category", "Technical"),
+                        "level": "Beginner",
+                        "progress": 30,
+                        "status": "Not tested"
+                    })
+                    break  # avoid duplicate for same skill
+    
+    return {"skills": extracted_skills}
+
+@app.post("/api/major-assessment")
+async def submit_major_assessment(
+    email: str = Form(...),
+    major: str = Form(...),
+    mode: str = Form(...),  # "text" or "file"
+    submission_text: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None)
+):
+    db = get_db()
+    assessments_collection = db["major_assessments"]
+    results_collection = db["major_assessment_results"]
+    
+    # 1. Get user submission text based on mode
+    input_text = ""
+    if mode == "file" and file:
+        file_text = await extract_text_from_file(file)
+        input_text = file_text
+    else:
+        input_text = submission_text or ""
+    
+    input_text = input_text.strip()
+    if not input_text:
+        raise HTTPException(status_code=400, detail="No submission content provided")
+        
+    # 2. Fetch ideal assessment
+    assessment_doc = assessments_collection.find_one({"major": {"$regex": f"^{major}$", "$options": "i"}})
+    if not assessment_doc:
+        raise HTTPException(status_code=404, detail=f"No assessment found for major: {major}")
+        
+    # 3. Compute Semantic Similarity (70%)
+    input_embedding = model.encode(input_text).reshape(1, -1)
+    ideal_embedding = np.array(assessment_doc["ideal_answer_embedding"]).reshape(1, -1)
+    semantic_sim = cosine_similarity(input_embedding, ideal_embedding)[0][0]
+    
+    # 4. Keyword Match per Skill (30%)
+    skill_results = []
+    total_weighted_score = 0
+    
+    skills_covered = assessment_doc.get("skills_covered", [])
+    for skill in skills_covered:
+        skill_name = skill["name"]
+        keywords = skill.get("keywords", [])
+        
+        matches = [kw for kw in keywords if kw.lower() in input_text.lower()]
+        keyword_score = len(matches) / len(keywords) if keywords else 1.0
+        
+        # Combine (70/30)
+        combined_score = (semantic_sim * 0.7) + (keyword_score * 0.3)
+        combined_score_pct = int(combined_score * 100)
+        
+        # Determine level
+        level = "Advanced" if combined_score_pct >= 85 else ("Intermediate" if combined_score_pct >= 60 else "Beginner")
+        status = "Verified" if combined_score_pct >= 60 else "Pending"
+        
+        skill_results.append({
+            "name": skill_name,
+            "score": combined_score_pct,
+            "level": level,
+            "status": status,
+            "matched_keywords": matches
+        })
+        total_weighted_score += combined_score_pct
+        
+    overall_score = int(total_weighted_score / len(skills_covered)) if skills_covered else 0
+    overall_level = "Advanced" if overall_score >= 85 else ("Intermediate" if overall_score >= 60 else "Beginner")
+    
+    # 5. Generate Feedback
+    feedback = f"Assessment complete for {major}. Overall Score: {overall_score}%. "
+    if overall_score >= 60:
+        feedback += "Great job! You demonstrated a solid grasp of the core concepts."
+    else:
+        feedback += "Consider reviewing the core concepts and incorporating more technical details in future work samples."
+
+    # 6. Store Result History (WITHOUT modifying user's profile yet)
+    result_doc = {
+        "email": email,
+        "major": major,
+        "overall_score": overall_score,
+        "overall_level": overall_level,
+        "skill_breakdown": skill_results,
+        "feedback": feedback,
+        "submitted_at": datetime.utcnow().isoformat()
+    }
+    results_collection.insert_one(result_doc)
+    
+    return {
+        "overall_score": overall_score,
+        "level": overall_level,
+        "feedback": feedback,
+        "skill_breakdown": skill_results
+    }
