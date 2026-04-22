@@ -59,32 +59,35 @@ def create_indexes(db):
     """Create indexes on frequently queried fields to speed up queries."""
     logger.info("Creating database indexes...")
     
-    # Skills collection
-    skills = db["skills"]
-    skills.create_index("skill_name")                       # for lookups by name
-    skills.create_index("major")                            # for filtering by major
-    skills.create_index("category")                         # technical vs soft
-    
-    # Users collection
-    users = db["users"]
-    users.create_index("email", unique=True)                # for login/profile lookups
-    
-    # job_market collection
-    jobs = db["job_market"]
-    jobs.create_index("Job_Title")
-    jobs.create_index("Company")
-    jobs.create_index("Location")
-    jobs.create_index("Key_Skills")                         # for skill search
-    
-    # major_assessments collection
-    assessments = db["major_assessments"]
-    assessments.create_index("major", unique=True)
+    try:
+        # Skills collection
+        skills = db["skills"]
+        skills.create_index("skill_name")                       # for lookups by name
+        skills.create_index("major")                            # for filtering by major
+        skills.create_index("category")                         # technical vs soft
+        
+        # Users collection
+        users = db["users"]
+        users.create_index("email", unique=True)                # for login/profile lookups
+        
+        # job_market collection
+        jobs = db["job_market"]
+        jobs.create_index("Job_Title")
+        jobs.create_index("Company")
+        jobs.create_index("Location")
+        jobs.create_index("Key_Skills")                         # for skill search
+        
+        # major_assessments collection
+        assessments = db["major_assessments"]
+        assessments.create_index("major", unique=True)
 
-    # Technical questions collection
-    tech_qs = db["technical_questions"]
-    tech_qs.create_index([("skill_name", 1), ("question_number", 1)])
-    
-    logger.info("Indexes created (or already exist).")
+        # Technical questions collection
+        tech_qs = db["technical_questions"]
+        tech_qs.create_index([("skill_name", 1), ("question_number", 1)])
+        
+        logger.info("Indexes created (or already exist).")
+    except Exception as e:
+        logger.warning(f"Could not create some indexes (likely due to conflicts): {e}")
 
 # --- Seeding functions ---
 

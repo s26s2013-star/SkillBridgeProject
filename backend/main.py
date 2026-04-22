@@ -17,6 +17,7 @@ import os
 import random
 import json
 import re
+from bson import ObjectId
 from dotenv import load_dotenv
 from upskill_service import generate_upskill_plan
 
@@ -74,6 +75,16 @@ class AssessmentResult(BaseModel):
     aiScore: int
     status: str = "completed"
     completedAt: str
+
+class MCQAnswer(BaseModel):
+    question_id: str
+    skill_name: str
+    selected_option_index: int
+
+class MCQSubmission(BaseModel):
+    email: str
+    answers: List[MCQAnswer]
+    shuffled_options: Dict[str, List[str]]
 
 class UpskillPlanRequest(BaseModel):
     email: str
@@ -361,6 +372,212 @@ def get_major_assessment(major: str):
         "major": assessment["major"],
         "task_description": assessment["task_description"],
         "skills_covered": assessment["skills_covered"]
+    }
+
+@app.get("/api/assessment/mcq")
+async def get_mcq_assessment(email: str):
+    db = get_db()
+
+    # 1. Find user
+    user_doc = db["users"].find_one({"email": email.strip().lower()})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 2. Validate major
+    major = user_doc.get("major", "").strip()
+    if not major or major == "Not specified":
+        raise HTTPException(
+            status_code=400,
+            detail="User has no specialization set. Please update your profile."
+        )
+
+    # 3. Fetch skills for this major
+    skills_cursor = list(db["skills"].find(
+        {"major": {"$regex": f"^{major}$", "$options": "i"}}
+    ))
+    if not skills_cursor:
+        skills_cursor = list(db["skills"].find(
+            {"major": {"$regex": major, "$options": "i"}}
+        ))
+
+    skills_data = []
+    total_questions_count = 0
+
+    for skill_doc in skills_cursor:
+        skill_name = skill_doc.get("skill_name", "")
+        if not skill_name:
+            continue
+
+        # 4. Fetch questions for this skill
+        questions_cursor = list(db["technical_questions"].find({
+            "major": {"$regex": f"^{major}$", "$options": "i"},
+            "skill_name": {"$regex": f"^{skill_name}$", "$options": "i"}
+        }))
+
+        if not questions_cursor:
+            continue
+
+        formatted_questions = []
+        for q in questions_cursor:
+            # 5. Copy and shuffle options
+            options_copy = list(q.get("options", []))
+            random.shuffle(options_copy)
+
+            # 6. Remove sensitive fields, add positional index
+            safe_options = []
+            for idx, opt in enumerate(options_copy):
+                safe_options.append({
+                    "index": idx,
+                    "option_text": opt.get("option_text", "")
+                })
+
+            formatted_questions.append({
+                "question_id": str(q["_id"]),
+                "question_number": q.get("question_number", 1),
+                "question_text": q.get("question_text", ""),
+                "options": safe_options
+            })
+
+        total_questions_count += len(formatted_questions)
+        skills_data.append({
+            "skill_name": skill_name,
+            "questions": formatted_questions
+        })
+
+    return {
+        "major": major,
+        "total_skills": len(skills_data),
+        "total_questions": total_questions_count,
+        "skills": skills_data
+    }
+
+@app.post("/api/assessment/mcq/submit")
+async def submit_mcq_assessment(submission: MCQSubmission):
+    db = get_db()
+
+    # 1. Find user
+    user_doc = db["users"].find_one({"email": submission.email.strip().lower()})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 2. Group scores by skill
+    skill_scores: Dict[str, int] = {}
+
+    for answer in submission.answers:
+        qid = answer.question_id
+        skill_name = answer.skill_name
+        selected_idx = answer.selected_option_index
+
+        # Fetch the original question from DB
+        try:
+            q_doc = db["technical_questions"].find_one({"_id": ObjectId(qid)})
+        except Exception:
+            continue
+
+        if not q_doc:
+            continue
+
+        # Get the option text that was shown at selected_idx using shuffled_options
+        shuffled_list = submission.shuffled_options.get(qid, [])
+        if selected_idx >= len(shuffled_list):
+            continue
+
+        selected_option_text = shuffled_list[selected_idx]
+
+        # Find the score for that option text in the original question
+        score_earned = 1  # default minimum
+        for orig_opt in q_doc.get("options", []):
+            if orig_opt.get("option_text", "").strip() == selected_option_text.strip():
+                score_earned = orig_opt.get("score", 1)
+                break
+
+        skill_scores[skill_name] = skill_scores.get(skill_name, 0) + score_earned
+
+    # 3. Calculate results per skill
+    skill_results = []
+    total_percentage_sum = 0
+    assessed_at = datetime.utcnow().isoformat()
+
+    for skill_name, raw_score in skill_scores.items():
+        max_score = 9  # 3 questions x max score 3
+        percentage = round((raw_score / max_score) * 100)
+
+        if percentage >= 78:
+            level = "Proficient"
+        elif percentage >= 45:
+            level = "Intermediate"
+        else:
+            level = "Beginner"
+
+        status = "Verified" if percentage >= 55 else "Needs Improvement"
+        total_percentage_sum += percentage
+
+        skill_results.append({
+            "skill_name": skill_name,
+            "raw_score": raw_score,
+            "max_score": max_score,
+            "percentage": percentage,
+            "level": level,
+            "status": status
+        })
+
+    # 4. Calculate overall
+    overall_percentage = round(total_percentage_sum / len(skill_results)) if skill_results else 0
+
+    if overall_percentage >= 78:
+        overall_level = "Proficient"
+    elif overall_percentage >= 45:
+        overall_level = "Intermediate"
+    else:
+        overall_level = "Beginner"
+
+    # 5. Upsert skills into user's skills array
+    current_skills = user_doc.get("skills", [])
+
+    for result_item in skill_results:
+        skill_obj = {
+            "name": result_item["skill_name"],
+            "level": result_item["level"],
+            "progress": result_item["percentage"],
+            "status": result_item["status"],
+            "category": "Technical",
+            "assessed_via": "MCQ",
+            "assessed_at": assessed_at
+        }
+
+        updated = False
+        for i, existing in enumerate(current_skills):
+            existing_name = existing if isinstance(existing, str) else existing.get("name", "")
+            if existing_name.lower() == result_item["skill_name"].lower():
+                current_skills[i] = skill_obj
+                updated = True
+                break
+
+        if not updated:
+            current_skills.append(skill_obj)
+
+    db["users"].update_one(
+        {"email": submission.email.strip().lower()},
+        {"$set": {"skills": current_skills}}
+    )
+
+    # 6. Save full result to mcq_results collection
+    major = user_doc.get("major", "")
+    db["mcq_results"].insert_one({
+        "email": submission.email.strip().lower(),
+        "major": major,
+        "skill_results": skill_results,
+        "overall_percentage": overall_percentage,
+        "overall_level": overall_level,
+        "submitted_at": assessed_at
+    })
+
+    # 7. Return response
+    return {
+        "message": "Assessment complete",
+        "overall_percentage": overall_percentage,
+        "overall_level": overall_level,
+        "results": skill_results
     }
 
 @app.post("/api/major-assessment")
@@ -762,3 +979,131 @@ def get_jobs(industry: Optional[str] = None, category: Optional[str] = None):
     jobs = list(db["job_market"].find(query))
     for j in jobs: j["_id"] = str(j["_id"])
     return jobs
+
+async def fetch_and_store_market_data(db):
+    skill_keywords = {
+        "Python": ["python"],
+        "JavaScript": ["javascript", "js", "node.js", "nodejs"],
+        "React": ["react", "reactjs", "react.js"],
+        "Java": ["java", "spring boot", "spring"],
+        "SQL": ["sql", "mysql", "postgresql", "database"],
+        "Cloud / AWS": ["aws", "cloud", "azure", "gcp", "google cloud"],
+        "Docker / Kubernetes": ["docker", "kubernetes", "k8s", "containers"],
+        "Cybersecurity": ["cybersecurity", "security", "penetration testing", "soc"],
+        "Machine Learning / AI": ["machine learning", "ai", "deep learning", "tensorflow", "pytorch"],
+        "Data Analysis": ["data analysis", "pandas", "numpy", "data science"],
+        "DevOps / CI-CD": ["devops", "ci/cd", "jenkins", "github actions"],
+        "Mobile Development": ["android", "ios", "react native", "flutter", "mobile"],
+        "Networking": ["networking", "cisco", "network", "firewall", "vpn"],
+        "Git": ["git", "github", "version control"],
+        "REST APIs": ["rest api", "api", "fastapi", "express"],
+    }
+
+    salary_ranges_omr = [
+        {"role": "Software Engineer", "specialization": "Software Engineering", "min_omr": 600, "max_omr": 1800, "median_omr": 1100, "source": "O*NET + Gulf salary index"},
+        {"role": "Web Developer", "specialization": "Web and Mobile Technologies", "min_omr": 500, "max_omr": 1600, "median_omr": 950, "source": "O*NET + Gulf salary index"},
+        {"role": "Cybersecurity Analyst", "specialization": "Cyber Security", "min_omr": 700, "max_omr": 2200, "median_omr": 1350, "source": "O*NET + Gulf salary index"},
+        {"role": "Data Scientist", "specialization": "Data Science and AI", "min_omr": 800, "max_omr": 2500, "median_omr": 1500, "source": "O*NET + Gulf salary index"},
+        {"role": "Network Engineer", "specialization": "Network Computing", "min_omr": 600, "max_omr": 1700, "median_omr": 1050, "source": "O*NET + Gulf salary index"},
+        {"role": "Cloud Engineer", "specialization": "Cloud Computing", "min_omr": 750, "max_omr": 2000, "median_omr": 1300, "source": "O*NET + Gulf salary index"},
+        {"role": "Systems Analyst", "specialization": "Information System", "min_omr": 550, "max_omr": 1600, "median_omr": 1000, "source": "O*NET + Gulf salary index"},
+    ]
+
+    skill_counts = {skill: 0 for skill in skill_keywords}
+    total_jobs_fetched = 0
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for page in range(1, 4):  # fetch 3 pages of results
+                url = f"https://www.arbeitnow.com/api/job-board-api?page={page}"
+                response = await client.get(url)
+                if response.status_code != 200:
+                    break
+                jobs = response.json().get("data", [])
+                if not jobs:
+                    break
+                total_jobs_fetched += len(jobs)
+                for job in jobs:
+                    text_to_search = (
+                        job.get("title", "").lower() + " " +
+                        job.get("description", "").lower() + " " +
+                        " ".join(job.get("tags", [])).lower()
+                    )
+                    for skill_label, keywords in skill_keywords.items():
+                        for kw in keywords:
+                            if kw in text_to_search:
+                                skill_counts[skill_label] += 1
+                                break
+    except Exception as e:
+        print(f"Arbeitnow fetch error: {e}")
+
+    skill_demand_list = []
+    for skill, count in skill_counts.items():
+        percentage = round((count / total_jobs_fetched) * 100) if total_jobs_fetched > 0 else 0
+        skill_demand_list.append({
+            "skill": skill,
+            "count": count,
+            "percentage": percentage
+        })
+
+    skill_demand_list.sort(key=lambda x: x["count"], reverse=True)
+
+    analytics_doc = {
+        "date": datetime.utcnow().strftime("%Y-%m-%d"),
+        "fetched_at": datetime.utcnow().isoformat(),
+        "total_jobs_analyzed": total_jobs_fetched,
+        "skill_demand": skill_demand_list,
+        "salary_ranges": salary_ranges_omr,
+        "source": "Arbeitnow API + O*NET Gulf salary index"
+    }
+
+    db["market_analytics"].replace_one(
+        {"date": analytics_doc["date"]},
+        analytics_doc,
+        upsert=True
+    )
+    return analytics_doc
+
+@app.get("/api/market-analytics")
+async def get_market_analytics(refresh: bool = False):
+    db = get_db()
+    
+    salary_ranges_omr = [
+        {"role": "Software Engineer", "specialization": "Software Engineering", "min_omr": 600, "max_omr": 1800, "median_omr": 1100, "source": "O*NET + Gulf salary index"},
+        {"role": "Web Developer", "specialization": "Web and Mobile Technologies", "min_omr": 500, "max_omr": 1600, "median_omr": 950, "source": "O*NET + Gulf salary index"},
+        {"role": "Cybersecurity Analyst", "specialization": "Cyber Security", "min_omr": 700, "max_omr": 2200, "median_omr": 1350, "source": "O*NET + Gulf salary index"},
+        {"role": "Data Scientist", "specialization": "Data Science and AI", "min_omr": 800, "max_omr": 2500, "median_omr": 1500, "source": "O*NET + Gulf salary index"},
+        {"role": "Network Engineer", "specialization": "Network Computing", "min_omr": 600, "max_omr": 1700, "median_omr": 1050, "source": "O*NET + Gulf salary index"},
+        {"role": "Cloud Engineer", "specialization": "Cloud Computing", "min_omr": 750, "max_omr": 2000, "median_omr": 1300, "source": "O*NET + Gulf salary index"},
+        {"role": "Systems Analyst", "specialization": "Information System", "min_omr": 550, "max_omr": 1600, "median_omr": 1000, "source": "O*NET + Gulf salary index"},
+    ]
+
+    fallback = {
+        "date": datetime.utcnow().strftime("%Y-%m-%d"),
+        "total_jobs_analyzed": 0,
+        "skill_demand": [
+            {"skill": "Python", "count": 0, "percentage": 0},
+            {"skill": "JavaScript", "count": 0, "percentage": 0},
+        ],
+        "salary_ranges": salary_ranges_omr,
+        "source": "Fallback data — live fetch unavailable",
+        "is_fallback": True
+    }
+
+    try:
+        if refresh:
+            return await fetch_and_store_market_data(db)
+
+        # Try fetching from DB
+        recent_doc = db["market_analytics"].find_one(sort=[("fetched_at", -1)])
+        
+        if not recent_doc:
+            return await fetch_and_store_market_data(db)
+        
+        # Remove _id
+        recent_doc.pop("_id", None)
+        return recent_doc
+
+    except Exception as e:
+        print(f"Error in /api/market-analytics: {e}")
+        return fallback
