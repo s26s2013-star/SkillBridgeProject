@@ -5,7 +5,8 @@ import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Button } from '../components/Button';
 import { 
     Code2, UploadCloud, CheckCircle2, AlertCircle, ChevronLeft, 
-    FileText, Loader2, Sparkles, Lightbulb, Plus, Clock, Info, Trash2
+    FileText, Loader2, Sparkles, Lightbulb, Plus, Clock, Info, Trash2,
+    Target
 } from 'lucide-react';
 import { getEvaluationForSkill, getShortEvaluationForSkill } from '../data/evaluationQuestions';
 import { getTechCaseStudyPrompt } from '../data/techCaseStudyPrompts';
@@ -56,6 +57,15 @@ export const Assessment = () => {
     const [activeTechSkill, setActiveTechSkill] = useState("");
     const [caseStudyText, setCaseStudyText] = useState("");
     const [caseStudyFile, setCaseStudyFile] = useState(null);
+
+    // === NEW SOFT SKILL MULTI-SCENARIO STATE ===
+    const [softMultiAnswers, setSoftMultiAnswers] = useState(["", "", ""]);
+    const [softRecordings, setSoftRecordings] = useState([
+        { blob: null, url: null, isRecording: false, status: 'idle' },
+        { blob: null, url: null, isRecording: false, status: 'idle' },
+        { blob: null, url: null, isRecording: false, status: 'idle' }
+    ]);
+    const [mediaRecorders, setMediaRecorders] = useState([null, null, null]);
 
     useEffect(() => {
         if (!user || !user.email) {
@@ -132,12 +142,20 @@ export const Assessment = () => {
                 // If verifying a specific skill, find its metadata
                 if (activeSkillName) {
                     const match = allDbSkills.find(s => s.skill_name.toLowerCase() === activeSkillName.toLowerCase());
+                    const category = match ? match.category : 'Custom';
                     setSkillDetails({
                         ...match,
                         name: activeSkillName,
-                        category: match ? match.category : 'Custom'
+                        category: category
                     });
-                    setEvaluationData(getEvaluationForSkill(activeSkillName, match ? match.category : ''));
+                    
+                    if (category === 'Soft') {
+                        setEvaluationData(getShortEvaluationForSkill(activeSkillName, category));
+                        setSubmissionMode('text'); // Default to text for soft skills
+                    } else {
+                        setEvaluationData(getEvaluationForSkill(activeSkillName, category));
+                        setSubmissionMode('quiz'); // Default to quiz for technical skills
+                    }
                     
                     setQuizLoading(true);
                     fetch(`http://127.0.0.1:8000/api/assessment/quiz-questions?skill_name=${encodeURIComponent(activeSkillName)}&category=${encodeURIComponent(match ? match.category : 'Technical')}`)
@@ -426,12 +444,63 @@ export const Assessment = () => {
     });
     console.log("[Assessment] availableSkills count:", availableSkills.length);
 
-    const SOFT_SKILLS = ["Communication", "Teamwork", "Problem Solving", "Adaptability"];
+    const SOFT_SKILLS = ["Communication", "Teamwork", "Problem Solving", "Time Management", "Adaptability"];
     const unevaluatedSoftSkills = SOFT_SKILLS.filter(
         ss => !skills.some(s => s.name.toLowerCase() === ss.toLowerCase())
     );
     const allSoftAnswered = unevaluatedSoftSkills.length > 0 &&
         unevaluatedSoftSkills.every(ss => softSkillAnswers[ss] !== undefined);
+
+    // --- VOICE RECORDING LOGIC ---
+    const startRecording = async (index) => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const recorder = new MediaRecorder(stream);
+            const chunks = [];
+
+            recorder.ondataavailable = (e) => chunks.push(e.data);
+            recorder.onstop = () => {
+                const blob = new Blob(chunks, { type: 'audio/webm' });
+                const url = URL.createObjectURL(blob);
+                setSoftRecordings(prev => {
+                    const next = [...prev];
+                    next[index] = { ...next[index], blob, url, isRecording: false, status: 'recorded' };
+                    return next;
+                });
+            };
+
+            recorder.start();
+            setMediaRecorders(prev => {
+                const next = [...prev];
+                next[index] = recorder;
+                return next;
+            });
+            setSoftRecordings(prev => {
+                const next = [...prev];
+                next[index] = { ...next[index], isRecording: true, status: 'recording' };
+                return next;
+            });
+        } catch (err) {
+            console.error("Mic access denied:", err);
+            alert("Microphone access is required for voice assessment.");
+        }
+    };
+
+    const stopRecording = (index) => {
+        const recorder = mediaRecorders[index];
+        if (recorder && recorder.state !== 'inactive') {
+            recorder.stop();
+            recorder.stream.getTracks().forEach(track => track.stop());
+        }
+    };
+
+    const deleteRecording = (index) => {
+        setSoftRecordings(prev => {
+            const next = [...prev];
+            next[index] = { blob: null, url: null, isRecording: false, status: 'idle' };
+            return next;
+        });
+    };
 
     const submitAllSoftSkills = async () => {
         if (!allSoftAnswered) return;
@@ -486,7 +555,6 @@ export const Assessment = () => {
                 console.error(`Failed to save soft skill result for ${softSkillName}:`, e);
             }
         }
-
         // Update UI
         setSkills(newSkillsList);
         setSoftSkillAnswers({});
@@ -498,7 +566,42 @@ export const Assessment = () => {
         try {
             let data;
             
-            if (submissionMode === 'quiz') {
+            if (skillDetails?.category === 'Soft') {
+                if (submissionMode === 'voice') {
+                    // Multi-Voice Submission
+                    const formData = new FormData();
+                    formData.append('email', user.email);
+                    formData.append('skill_name', activeSkillName);
+                    
+                    const keywords = skillDetails.scenarios.map(s => s.keywords);
+                    formData.append('expected_keywords_json', JSON.stringify(keywords));
+                    
+                    softRecordings.forEach((rec, i) => {
+                        if (rec.blob) {
+                            formData.append('files', rec.blob, `scenario_${i+1}.webm`);
+                        }
+                    });
+
+                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/voice_evaluate_multi', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    data = await response.json();
+                } else {
+                    // Multi-Text Submission
+                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/text_evaluate_multi', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email: user.email,
+                            skill_name: activeSkillName,
+                            answers: softMultiAnswers,
+                            expected_keywords: skillDetails.scenarios.map(s => s.keywords)
+                        })
+                    });
+                    data = await response.json();
+                }
+            } else if (submissionMode === 'quiz') {
                 if (quizAnswers.some(a => a === null)) {
                     setIsSubmitting(false);
                     return;
@@ -575,6 +678,12 @@ export const Assessment = () => {
         setResult(null);
         setSubmission('');
         setSelectedFile(null);
+        setSoftMultiAnswers(["", "", ""]);
+        setSoftRecordings([
+            { blob: null, url: null, isRecording: false, status: 'idle' },
+            { blob: null, url: null, isRecording: false, status: 'idle' },
+            { blob: null, url: null, isRecording: false, status: 'idle' }
+        ]);
         navigate('/assessment'); // Removes query param, returns to hub
     };
 
@@ -897,7 +1006,7 @@ export const Assessment = () => {
                                                                 <div>
                                                                     <p style={{ fontSize: '0.95rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>Select a technical skill to begin the assessment flow.</p>
                                                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.85rem' }}>
-                                                                        {dbSkillsList.map(skill => {
+                                                                        {dbSkillsList.filter(s => s.category !== 'Soft').map(skill => {
                                                                             const skillName = skill.skill_name || skill.name;
                                                                             const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === skillName.toLowerCase());
                                                                             return (
@@ -920,74 +1029,42 @@ export const Assessment = () => {
 
                                                 {activeTab === 'soft' && (
                                                     <div>
-                                                        {unevaluatedSoftSkills.length === 0 ? (
-                                                            <div style={{ textAlign: 'center', padding: '2rem' }}>
-                                                                <CheckCircle2 size={40} color="var(--color-success)" style={{ margin: '0 auto 1rem auto' }} />
-                                                                <p style={{ fontWeight: 600, fontSize: '1.1rem' }}>All soft skills have been evaluated!</p>
-                                                            </div>
-                                                        ) : (
-                                                            <>
-                                                                <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', fontSize: '0.95rem' }}>
-                                                                    Answer all {unevaluatedSoftSkills.length} scenario{unevaluatedSoftSkills.length > 1 ? 's' : ''} below, then click <strong>Submit All</strong> to save your results.
-                                                                </p>
-                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                                                                    {SOFT_SKILLS.map(softSkill => {
-                                                                        const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === softSkill.toLowerCase());
-                                                                        if (isAlreadyOwned) {
-                                                                            return (
-                                                                                <div key={softSkill} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '1rem', background: 'var(--color-white)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', opacity: 0.6 }}>
-                                                                                    <CheckCircle2 size={18} color="var(--color-success)" />
-                                                                                    <span style={{ fontWeight: 600 }}>{softSkill}</span>
-                                                                                    <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Already evaluated</span>
-                                                                                </div>
-                                                                            );
-                                                                        }
-                                                                        const questionObj = getShortEvaluationForSkill(softSkill, 'Soft');
-                                                                        return (
-                                                                            <div key={softSkill} style={{ borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', overflow: 'hidden' }}>
-                                                                                <div style={{ background: 'var(--color-primary)', padding: '0.75rem 1.25rem' }}>
-                                                                                    <span style={{ fontWeight: 700, color: '#fff', fontSize: '0.95rem' }}>{softSkill}</span>
-                                                                                </div>
-                                                                                <div style={{ padding: '1.25rem', background: 'var(--color-bg-paper)', borderBottom: '1px solid var(--color-border)' }}>
-                                                                                    <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: 500, lineHeight: 1.6, color: 'var(--color-text)' }}>
-                                                                                        {questionObj.question}
-                                                                                    </p>
-                                                                                </div>
-                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '1rem', background: 'var(--color-white)' }}>
-                                                                                    {questionObj.options.map((option, idx) => (
-                                                                                        <label
-                                                                                            key={idx}
-                                                                                            style={{
-                                                                                                display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.9rem 1rem',
-                                                                                                borderRadius: 'var(--radius-sm)',
-                                                                                                border: softSkillAnswers[softSkill] === idx ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
-                                                                                                background: softSkillAnswers[softSkill] === idx ? 'rgba(59,130,246,0.05)' : 'transparent',
-                                                                                                cursor: 'pointer', transition: 'all 0.15s'
-                                                                                            }}
-                                                                                        >
-                                                                                            <input
-                                                                                                type="radio"
-                                                                                                name={`soft_${softSkill}`}
-                                                                                                checked={softSkillAnswers[softSkill] === idx}
-                                                                                                onChange={() => setSoftSkillAnswers(prev => ({ ...prev, [softSkill]: idx }))}
-                                                                                                style={{ marginTop: '0.2rem', accentColor: 'var(--color-primary)' }}
-                                                                                            />
-                                                                                            <span style={{ fontSize: '0.9rem', lineHeight: 1.5 }}>{option.text}</span>
-                                                                                        </label>
-                                                                                    ))}
-                                                                                </div>
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1.5rem' }}>
-                                                                    <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-                                                                    <Button onClick={submitAllSoftSkills} disabled={!allSoftAnswered}>
-                                                                        Submit All ({Object.keys(softSkillAnswers).length}/{unevaluatedSoftSkills.length} answered)
-                                                                    </Button>
-                                                                </div>
-                                                            </>
-                                                        )}
+                                                        <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', fontSize: '0.95rem' }}>
+                                                            Select a core soft skill to begin your multi-scenario research-based evaluation.
+                                                        </p>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1rem' }}>
+                                                            {SOFT_SKILLS.map(softSkill => {
+                                                                const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === softSkill.toLowerCase());
+                                                                return (
+                                                                    <button 
+                                                                        key={softSkill} 
+                                                                        onClick={() => {
+                                                                            setIsModalOpen(false);
+                                                                            navigate(`/assessment?skill=${encodeURIComponent(softSkill)}`);
+                                                                        }}
+                                                                        style={{ 
+                                                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', 
+                                                                            gap: '0.75rem', padding: '1.25rem', 
+                                                                            background: isAlreadyOwned ? 'rgba(0,0,0,0.03)' : 'var(--color-white)', 
+                                                                            borderRadius: 'var(--radius-md)', 
+                                                                            border: '1px solid var(--color-border)', 
+                                                                            cursor: 'pointer', textAlign: 'left', 
+                                                                            width: '100%', transition: 'all 0.2s',
+                                                                            boxShadow: isAlreadyOwned ? 'none' : '0 2px 4px rgba(0,0,0,0.04)'
+                                                                        }}
+                                                                    >
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                                            {isAlreadyOwned ? <CheckCircle2 size={18} color="var(--color-success)" /> : <Target size={18} color="var(--color-primary)" />}
+                                                                            <span style={{ fontSize: '1rem', fontWeight: '600', color: isAlreadyOwned ? 'var(--color-text-muted)' : 'var(--color-text)' }}>{softSkill}</span>
+                                                                        </div>
+                                                                        {!isAlreadyOwned && <ChevronLeft size={16} style={{ transform: 'rotate(180deg)', color: 'var(--color-primary)' }} />}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '2rem' }}>
+                                                            <Button variant="outline" onClick={() => setIsModalOpen(false)}>Close</Button>
+                                                        </div>
                                                     </div>
                                                 )}
 
@@ -1172,24 +1249,32 @@ export const Assessment = () => {
                         }}>
                             <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
                                 <button
-                                    onClick={() => setSubmissionMode('quiz')}
-                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'quiz' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'quiz' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
-                                >
-                                    AI Quiz
-                                </button>
-                                <button
                                     onClick={() => setSubmissionMode('text')}
                                     style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'text' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'text' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
                                 >
                                     Write Answer
                                 </button>
+                                <button
+                                    onClick={() => setSubmissionMode('voice')}
+                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'voice' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'voice' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                >
+                                    Voice Recording
+                                </button>
                                 {skillDetails.category !== 'Soft' && (
+                                    <>
+                                    <button
+                                        onClick={() => setSubmissionMode('quiz')}
+                                        style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'quiz' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'quiz' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                    >
+                                        AI Quiz
+                                    </button>
                                     <button
                                         onClick={() => setSubmissionMode('upload')}
                                         style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'upload' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'upload' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
                                     >
                                         Upload Work Sample
                                     </button>
+                                    </>
                                 )}
                             </div>
 
@@ -1199,13 +1284,75 @@ export const Assessment = () => {
                                     borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
                                     color: 'var(--color-primary)'
                                 }}>
-                                    {submissionMode === 'quiz' ? <CheckCircle2 size={24} /> : (submissionMode === 'text' ? <FileText size={24} /> : <UploadCloud size={24} />)}
+                                    {submissionMode === 'voice' ? <Plus size={24} /> : (submissionMode === 'text' ? <FileText size={24} /> : <CheckCircle2 size={24} />)}
                                 </div>
                                 <h3 style={{ margin: 0 }}>
-                                    {submissionMode === 'quiz' ? 'AI Generated Evaluation Quiz' : (submissionMode === 'text' ? 'Practical Scenario Task' : 'Upload Work Sample')}
+                                    {submissionMode === 'voice' ? 'Split Voice Assessment' : (submissionMode === 'text' ? 'Multi-Scenario Assessment' : 'AI Evaluation')}
                                 </h3>
                             </div>
 
+                            {skillDetails.category === 'Soft' && evaluationData?.scenarios ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                                    {evaluationData.scenarios.map((scenario, idx) => (
+                                        <div key={idx} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                                                <h4 style={{ margin: 0, fontSize: '1rem', color: 'var(--color-primary)' }}>Scenario {idx + 1}</h4>
+                                            </div>
+                                            <p style={{ margin: '0 0 1.25rem 0', fontWeight: 600, fontSize: '1.05rem', lineHeight: 1.5 }}>{scenario.question}</p>
+                                            
+                                            {submissionMode === 'text' ? (
+                                                <textarea 
+                                                    className="form-control"
+                                                    placeholder="Describe your reasoning and exact response..."
+                                                    style={{ minHeight: '120px', width: '100%', padding: '1rem', fontSize: '0.95rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', resize: 'vertical' }}
+                                                    value={softMultiAnswers[idx]}
+                                                    onChange={(e) => {
+                                                        const next = [...softMultiAnswers];
+                                                        next[idx] = e.target.value;
+                                                        setSoftMultiAnswers(next);
+                                                    }}
+                                                />
+                                            ) : (
+                                                <div style={{ background: 'var(--color-white)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+                                                    {softRecordings[idx].status === 'idle' && (
+                                                        <Button 
+                                                            variant="primary" 
+                                                            onClick={() => startRecording(idx)}
+                                                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.25rem' }}
+                                                        >
+                                                            <Plus size={18} /> Record Answer
+                                                        </Button>
+                                                    )}
+                                                    {softRecordings[idx].status === 'recording' && (
+                                                        <Button 
+                                                            variant="outline" 
+                                                            onClick={() => stopRecording(idx)}
+                                                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.25rem', borderColor: '#EF4444', color: '#EF4444' }}
+                                                        >
+                                                            <div className="pulse-red" style={{ width: '10px', height: '10px', background: '#EF4444', borderRadius: '50%' }} /> Stop
+                                                        </Button>
+                                                    )}
+                                                    {softRecordings[idx].status === 'recorded' && (
+                                                        <>
+                                                            <audio src={softRecordings[idx].url} controls style={{ height: '32px' }} />
+                                                            <button 
+                                                                onClick={() => deleteRecording(idx)}
+                                                                style={{ background: 'transparent', border: 'none', color: '#EF4444', cursor: 'pointer' }}
+                                                            >
+                                                                <Trash2 size={18} />
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>
+                                                        {softRecordings[idx].status === 'recording' ? 'Speaking...' : (softRecordings[idx].status === 'recorded' ? 'Captured' : 'Ready')}
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                            <>
                             {submissionMode !== 'quiz' && (
                                 <div style={{ 
                                     background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', 
@@ -1321,11 +1468,17 @@ export const Assessment = () => {
                                     )}
                                 </div>
                             )}
+                            </>
+                            )}
 
                             <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 {submissionMode === 'quiz' && !quizLoading ? (
                                     <div style={{ fontSize: '1.1rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
                                         {quizAnswers.filter(a => a !== null).length} / {quizQuestions.length} answered
+                                    </div>
+                                ) : (skillDetails.category === 'Soft' && submissionMode === 'voice') ? (
+                                    <div style={{ fontSize: '1.1rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                                        {softRecordings.filter(r => r.blob).length} / 3 recorded
                                     </div>
                                 ) : <div />}
                                 
@@ -1335,7 +1488,8 @@ export const Assessment = () => {
                                     onClick={handleSubmitAssessment} 
                                     disabled={
                                         (submissionMode === 'quiz' && (quizLoading || quizAnswers.some(a => a === null))) || 
-                                        (submissionMode === 'text' && !submission.trim()) || 
+                                        (submissionMode === 'text' && (skillDetails.category === 'Soft' ? softMultiAnswers.some(a => !a.trim()) : !submission.trim())) || 
+                                        (submissionMode === 'voice' && softRecordings.some(r => !r.blob)) ||
                                         (submissionMode === 'upload' && !selectedFile) || 
                                         isSubmitting
                                     }
