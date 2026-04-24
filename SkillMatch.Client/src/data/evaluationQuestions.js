@@ -76,99 +76,89 @@ export const getEvaluationForSkill = (skillName, category) => {
 };
 
 export const shortAssessmentQuestions = {
-  // ── Soft Skills ──────────────────────────────────────────────────────────
-
+  // ── Soft Skills (Multi-Scenario) ──────────────────────────────────────────
   "Communication": {
-    question: `Scenario: You are a developer on a team delivering a client project. 
-Three days before the deadline your team discovers a critical backend bug that will delay the release by at least five days. 
-The client has already announced the launch publicly. 
-What do you do FIRST?`,
-    options: [
+    type: "Soft",
+    scenarios: [
       {
-        text: "Wait until you are certain of the exact delay length before telling anyone, to avoid unnecessary panic.",
-        points: 30,
-        level: "Beginner"
+        question: "How do you explain a complex idea to someone who has no technical background?",
+        keywords: ["simple language", "clarity", "example", "understanding", "audience"]
       },
       {
-        text: "Email the project manager with the technical details of the bug and ask them to inform the client on your behalf.",
-        points: 60,
-        level: "Intermediate"
+        question: "How do you ensure your message is understood correctly in a team discussion?",
+        keywords: ["feedback", "confirmation", "listening", "clarity", "repetition"]
       },
       {
-        text: "Immediately escalate to the project manager with a clear summary: what broke, the estimated impact, a proposed revised timeline, and what the team is doing right now to fix it.",
-        points: 90,
-        level: "Advanced"
+        question: "Describe how you handle misunderstandings in communication.",
+        keywords: ["clarification", "calm", "resolve", "misunderstanding", "discussion"]
       }
     ]
   },
-
   "Teamwork": {
-    question: `Scenario: You are working in a team of five. One teammate, who is normally reliable, has missed two sprint deadlines in a row. 
-The rest of the team is now covering their tasks in silence to avoid conflict. 
-The sprint review is in two days. 
-What do you do?`,
-    options: [
+    type: "Soft",
+    scenarios: [
       {
-        text: "Continue covering for them. Missing the deadline would look bad for the whole team.",
-        points: 30,
-        level: "Beginner"
+        question: "Describe a situation where you worked successfully in a team.",
+        keywords: ["collaboration", "contribution", "support", "teamwork", "goal"]
       },
       {
-        text: "Tell the Scrum Master privately so they can deal with it, and focus on finishing your own tasks.",
-        points: 60,
-        level: "Intermediate"
+        question: "How do you handle disagreements in a group project?",
+        keywords: ["compromise", "discussion", "respect", "solution", "conflict"]
       },
       {
-        text: "Have a private, non-judgmental check-in with the teammate to understand if they need help, then align with the team and PM on realistic adjusted deliverables before the review.",
-        points: 90,
-        level: "Advanced"
+        question: "What role do you usually take in a team and why?",
+        keywords: ["leader", "support", "responsibility", "coordination", "role"]
       }
     ]
   },
-
   "Problem Solving": {
-    question: `Scenario: Your company's e-commerce website goes down at 11 PM on a Friday night during a flash sale. 
-Orders are failing. The on-call engineer is unreachable. 
-You have read access to the production logs but no deployment privileges. 
-What is your immediate course of action?`,
-    options: [
+    type: "Soft",
+    scenarios: [
       {
-        text: "Post in the team Slack channel that the site is down and wait for someone with deployment access to respond.",
-        points: 30,
-        level: "Beginner"
+        question: "How do you approach a new problem you have never seen before?",
+        keywords: ["analysis", "understand", "steps", "breakdown", "research"]
       },
       {
-        text: "Check the logs to identify the error, then call the on-call engineer repeatedly and escalate to your direct manager.",
-        points: 60,
-        level: "Intermediate"
+        question: "Give an example of a problem you solved successfully.",
+        keywords: ["solution", "action", "result", "improvement", "decision"]
       },
       {
-        text: "Simultaneously: check logs to isolate the root cause, escalate through the emergency contact chain, prepare a clear incident summary with logs attached, and check if a quick config change (e.g. feature flag off) can restore service without a deployment.",
-        points: 90,
-        level: "Advanced"
+        question: "What do you do if your first solution does not work?",
+        keywords: ["retry", "alternative", "adjust", "evaluate", "improve"]
       }
     ]
   },
-
+  "Time Management": {
+    type: "Soft",
+    scenarios: [
+      {
+        question: "How do you prioritize tasks with multiple deadlines?",
+        keywords: ["priority", "deadline", "planning", "urgent", "important"]
+      },
+      {
+        question: "What tools or methods do you use to manage your time?",
+        keywords: ["planner", "schedule", "calendar", "task list", "organization"]
+      },
+      {
+        question: "What do you do when you cannot complete a task on time?",
+        keywords: ["reschedule", "notify", "adjust", "delay", "manage"]
+      }
+    ]
+  },
   "Adaptability": {
-    question: `Scenario: You are two weeks into building a feature according to approved specifications. 
-Your manager calls a meeting and informs you the business has pivoted — the feature needs to be rebuilt using a completely different approach, and the deadline stays the same. 
-How do you respond?`,
-    options: [
+    type: "Soft",
+    scenarios: [
       {
-        text: "Express frustration to the team, then restart the work from scratch as instructed.",
-        points: 30,
-        level: "Beginner"
+        question: "How do you react when project requirements suddenly change?",
+        keywords: ["adjust", "flexible", "change", "adapt", "update"]
       },
       {
-        text: "Accept the change, document what was built so far, and begin planning the new approach with your manager.",
-        points: 60,
-        level: "Intermediate"
+        question: "Describe a time you had to learn something new quickly.",
+        keywords: ["learn", "fast", "new skill", "adapt", "improve"]
       },
       {
-        text: "Quickly audit the existing code to identify reusable components, propose a realistic revised plan to your manager that meets the deadline by leveraging what can be salvaged, and flag specific risks and trade-offs for their decision.",
-        points: 90,
-        level: "Advanced"
+        question: "How do you handle unexpected challenges?",
+        keywords: ["solution", "calm", "adjust", "think", "respond"]
       }
     ]
   },
@@ -186,14 +176,22 @@ How do you respond?`,
 
 
 export const getShortEvaluationForSkill = (skillName, category) => {
+    // Exact match for the new structure
+    if (evaluationQuestions[skillName] && evaluationQuestions[skillName].type === "Soft") {
+        return evaluationQuestions[skillName];
+    }
+
     if (shortAssessmentQuestions[skillName]) {
         return shortAssessmentQuestions[skillName];
     }
     
     // Fuzzy matching
     const lowerName = skillName.toLowerCase();
-    const matches = Object.keys(shortAssessmentQuestions).filter(k => lowerName.includes(k.toLowerCase()) || k.toLowerCase().includes(lowerName));
-    if (matches.length > 0 && matches[0] !== "Technical Generic") return shortAssessmentQuestions[matches[0]];
+    const matches = Object.keys(evaluationQuestions).filter(k => lowerName.includes(k.toLowerCase()) || k.toLowerCase().includes(lowerName));
+    if (matches.length > 0 && evaluationQuestions[matches[0]].type === "Soft") return evaluationQuestions[matches[0]];
+
+    const shortMatches = Object.keys(shortAssessmentQuestions).filter(k => lowerName.includes(k.toLowerCase()) || k.toLowerCase().includes(lowerName));
+    if (shortMatches.length > 0 && shortMatches[0] !== "Technical Generic") return shortAssessmentQuestions[shortMatches[0]];
 
     return shortAssessmentQuestions["Technical Generic"];
 };
