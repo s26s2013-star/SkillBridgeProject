@@ -5,7 +5,7 @@ import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Button } from '../components/Button';
 import { 
     Code2, UploadCloud, CheckCircle2, AlertCircle, ChevronLeft, 
-    FileText, Loader2, Sparkles, Lightbulb, Plus, Clock, Info, Trash2
+    FileText, Loader2, Sparkles, Lightbulb, Plus, Clock, Info, Trash2, Mic, Square, Play
 } from 'lucide-react';
 import { getEvaluationForSkill, getShortEvaluationForSkill } from '../data/evaluationQuestions';
 import { getTechCaseStudyPrompt } from '../data/techCaseStudyPrompts';
@@ -37,6 +37,7 @@ export const Assessment = () => {
     const [evaluationData, setEvaluationData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [submission, setSubmission] = useState('');
+    const [multiAnswers, setMultiAnswers] = useState({ 0: '', 1: '', 2: '' });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [result, setResult] = useState(null);
     const [selectedFile, setSelectedFile] = useState(null);
@@ -45,6 +46,16 @@ export const Assessment = () => {
     const [quizQuestions, setQuizQuestions] = useState([]);
     const [quizAnswers, setQuizAnswers] = useState(new Array(10).fill(null));
     const [quizLoading, setQuizLoading] = useState(false);
+
+    // === VOICE RECORDING STATE ===
+    const [isRecording, setIsRecording] = useState(false);
+    const [audioBlob, setAudioBlob] = useState(null);
+    const [audioURL, setAudioURL] = useState(null);
+    const [multiAudioBlobs, setMultiAudioBlobs] = useState({ 0: null, 1: null, 2: null });
+    const [multiAudioURLs, setMultiAudioURLs] = useState({ 0: null, 1: null, 2: null });
+    const [recordingIndex, setRecordingIndex] = useState(null);
+    const mediaRecorderRef = React.useRef(null);
+    const audioChunksRef = React.useRef([]);
 
     // === NEW TECHNICAL ASSESSMENT STATE ===
     const [techFlowActive, setTechFlowActive] = useState(false);
@@ -132,15 +143,23 @@ export const Assessment = () => {
                 // If verifying a specific skill, find its metadata
                 if (activeSkillName) {
                     const match = allDbSkills.find(s => s.skill_name.toLowerCase() === activeSkillName.toLowerCase());
+                    const category = match ? match.category : 'Custom';
+                    const softSkillNames = ['communication', 'teamwork', 'problem solving', 'time management', 'adaptability'];
+                    const isSoftSkill = category === 'Soft' || softSkillNames.includes(activeSkillName?.toLowerCase()?.trim());
                     setSkillDetails({
                         ...match,
                         name: activeSkillName,
-                        category: match ? match.category : 'Custom'
+                        category,
+                        isSoft: isSoftSkill
                     });
-                    setEvaluationData(getEvaluationForSkill(activeSkillName, match ? match.category : ''));
-                    
+                    setEvaluationData(getEvaluationForSkill(activeSkillName, category, isSoftSkill));
+                    if (isSoftSkill) {
+                        setSubmissionMode('text');
+                    } else if (submissionMode === 'voice') {
+                        setSubmissionMode('quiz');
+                    }
                     setQuizLoading(true);
-                    fetch(`http://127.0.0.1:8000/api/assessment/quiz-questions?skill_name=${encodeURIComponent(activeSkillName)}&category=${encodeURIComponent(match ? match.category : 'Technical')}`)
+                    fetch(`http://127.0.0.1:8000/api/assessment/quiz-questions?skill_name=${encodeURIComponent(activeSkillName)}&category=${encodeURIComponent(isSoftSkill ? 'Soft' : category)}`)
                         .then(res => res.json())
                         .then(data => {
                             const qs = data.questions || [];
@@ -186,7 +205,27 @@ export const Assessment = () => {
 
     // --- HUB FUNCTIONS ---
 
-    const startShortTest = (skillName, category) => {
+    const startShortTest = async (skillName, category) => {
+        const isSoft = category === 'Soft' || ['communication', 'teamwork', 'problem solving', 'time management', 'adaptability'].includes(skillName?.toLowerCase());
+        if (isSoft) {
+            const skillToAdd = {
+                name: skillName,
+                progress: 0,
+                status: 'Not tested',
+                level: 'Beginner',
+                category: 'Soft',
+                description: 'Soft skill requires AI text or voice assessment for proficiency scoring.',
+                components: []
+            };
+            const newSkillsList = [skillToAdd, ...skills.filter(s => s.name.toLowerCase() !== skillName.toLowerCase())];
+            setSkills(newSkillsList);
+            await saveSkillsToProfile(newSkillsList.map(s => ({
+                name: s.name, level: s.level, progress: s.progress, status: s.status,
+                description: s.description, components: s.components, category: s.category
+            })));
+            setShortTestResult(skillToAdd);
+            return;
+        }
         const questionObj = getShortEvaluationForSkill(skillName, category);
         setActiveShortTest({ name: skillName, category, questionObj });
         setShortTestSelection(null);
@@ -493,12 +532,87 @@ export const Assessment = () => {
         setIsModalOpen(false);
     };
 
+    const startRecording = async (index = null) => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            mediaRecorderRef.current = mediaRecorder;
+            audioChunksRef.current = [];
+            setRecordingIndex(index);
+            mediaRecorder.ondataavailable = event => {
+                if (event.data.size > 0) audioChunksRef.current.push(event.data);
+            };
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+                if (index !== null) {
+                    setMultiAudioBlobs(prev => ({ ...prev, [index]: blob }));
+                    setMultiAudioURLs(prev => ({ ...prev, [index]: URL.createObjectURL(blob) }));
+                } else {
+                    setAudioBlob(blob);
+                    setAudioURL(URL.createObjectURL(blob));
+                }
+                stream.getTracks().forEach(track => track.stop());
+                setRecordingIndex(null);
+            };
+            mediaRecorder.start();
+            setIsRecording(true);
+            if (index !== null) {
+                setMultiAudioBlobs(prev => ({ ...prev, [index]: null }));
+                setMultiAudioURLs(prev => ({ ...prev, [index]: null }));
+            } else {
+                setAudioBlob(null);
+                setAudioURL(null);
+            }
+        } catch (err) {
+            console.error('Microphone access denied or error:', err);
+            alert('Could not access microphone. Please check permissions.');
+        }
+    };
+
+    const stopRecording = () => {
+        if (mediaRecorderRef.current && isRecording) {
+            mediaRecorderRef.current.stop();
+            setIsRecording(false);
+        }
+    };
+
     const handleSubmitAssessment = async () => {
         setIsSubmitting(true);
         try {
             let data;
-            
-            if (submissionMode === 'quiz') {
+            const isSoft = !!skillDetails?.isSoft;
+            if (submissionMode === 'voice') {
+                const formData = new FormData();
+                formData.append('email', user?.email || 'unknown');
+                formData.append('skill_name', activeSkillName);
+                const keywordsText = evaluationData?.allScenarios
+                    ? evaluationData.allScenarios.flatMap(s => s.keywords || []).join(', ')
+                    : (evaluationData?.keywords || []).join(', ');
+                formData.append('expected_keywords', keywordsText);
+                if (isSoft) {
+                    if (Object.values(multiAudioBlobs).some(b => !b)) {
+                        setIsSubmitting(false);
+                        return;
+                    }
+                    if (multiAudioBlobs[0]) formData.append('file0', multiAudioBlobs[0], 'audio0.webm');
+                    if (multiAudioBlobs[1]) formData.append('file1', multiAudioBlobs[1], 'audio1.webm');
+                    if (multiAudioBlobs[2]) formData.append('file2', multiAudioBlobs[2], 'audio2.webm');
+                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/voice_evaluate_multi', {
+                        method: 'POST', body: formData
+                    });
+                    data = await response.json();
+                } else {
+                    if (!audioBlob) {
+                        setIsSubmitting(false);
+                        return;
+                    }
+                    formData.append('file', audioBlob, 'recording.webm');
+                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/upload_evaluate', {
+                        method: 'POST', body: formData
+                    });
+                    data = await response.json();
+                }
+            } else if (submissionMode === 'quiz') {
                 if (quizAnswers.some(a => a === null)) {
                     setIsSubmitting(false);
                     return;
@@ -506,66 +620,81 @@ export const Assessment = () => {
                 const response = await fetch('http://127.0.0.1:8000/api/user/assessment/quiz_evaluate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        email: user.email,
-                        skill_name: activeSkillName,
-                        answers: quizAnswers
-                    })
+                    body: JSON.stringify({ email: user.email, skill_name: activeSkillName, answers: quizAnswers })
                 });
                 data = await response.json();
-                
             } else if (submissionMode === 'upload') {
                 if (!selectedFile || !activeSkillName) {
                     setIsSubmitting(false);
                     return;
                 }
-                
                 const formData = new FormData();
-                formData.append('email', user?.email || "unknown");
+                formData.append('email', user?.email || 'unknown');
                 formData.append('skill_name', activeSkillName);
                 formData.append('file', selectedFile);
-
                 const response = await fetch('http://127.0.0.1:8000/api/user/assessment/upload_evaluate', {
-                    method: 'POST',
-                    body: formData
+                    method: 'POST', body: formData
                 });
                 data = await response.json();
-                
             } else {
-                if (!submission.trim() || !activeSkillName) {
-                    setIsSubmitting(false);
-                    return;
+                if (isSoft) {
+                    const hasAnswers = Object.values(multiAnswers).some(ans => ans.trim());
+                    if (!hasAnswers || !activeSkillName) {
+                        setIsSubmitting(false);
+                        return;
+                    }
+                    const formData = new FormData();
+                    formData.append('email', user?.email || 'unknown');
+                    formData.append('skill_name', activeSkillName);
+                    const allQs = evaluationData.allScenarios.map((s, i) => `[SCENARIO ${i + 1}] ${s.question}`).join('\n');
+                    const allAns = evaluationData.allScenarios.map((s, i) => `[ANSWER ${i + 1}] ${multiAnswers[i] || ''}`).join('\n\n');
+                    const allKeywords = evaluationData.allScenarios.flatMap(s => s.keywords || []).join(', ');
+                    formData.append('question', allQs);
+                    formData.append('expected_keywords', allKeywords);
+                    formData.append('submission_text', allAns);
+                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/text_evaluate', {
+                        method: 'POST', body: formData
+                    });
+                    data = await response.json();
+                } else {
+                    if (!submission.trim() || !activeSkillName) {
+                        setIsSubmitting(false);
+                        return;
+                    }
+                    const response = await fetch('http://localhost:8000/api/user/assessment', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email: user.email,
+                            skill_name: activeSkillName,
+                            submission: submission,
+                            expected_keywords: evaluationData?.keywords || []
+                        })
+                    });
+                    data = await response.json();
                 }
-                
-                const response = await fetch('http://localhost:8000/api/user/assessment', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        email: user.email,
-                        skill_name: activeSkillName,
-                        submission: submission,
-                        expected_keywords: evaluationData?.keywords || []
-                    })
-                });
-                data = await response.json();
             }
-            
             await fetch('http://127.0.0.1:8000/api/assessment/result', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    userId: user?.id || user?.email || "unknown",
+                    userId: user?.id || user?.email || 'unknown',
                     skillId: activeSkillName,
-                    answers: submissionMode === 'quiz' ? `AI Quiz Score: ${data.score}` : (submissionMode === 'upload' ? `File: ${selectedFile?.name}` : submission),
+                    answers: submissionMode === 'quiz'
+                        ? `AI Quiz Score: ${data.score}`
+                        : (submissionMode === 'upload'
+                            ? `File: ${selectedFile?.name}`
+                            : submissionMode === 'voice'
+                                ? 'Voice Recording'
+                                : (skillDetails?.isSoft ? Object.values(multiAnswers).join(' | ') : submission)),
                     aiScore: data.score || 0,
-                    status: "completed",
+                    status: 'completed',
                     completedAt: new Date().toISOString()
                 })
             });
-            
             setResult(data);
         } catch (err) {
-            console.error("Submission failed", err);
+            console.error('Submission failed', err);
         } finally {
             setIsSubmitting(false);
         }
@@ -920,74 +1049,21 @@ export const Assessment = () => {
 
                                                 {activeTab === 'soft' && (
                                                     <div>
-                                                        {unevaluatedSoftSkills.length === 0 ? (
-                                                            <div style={{ textAlign: 'center', padding: '2rem' }}>
-                                                                <CheckCircle2 size={40} color="var(--color-success)" style={{ margin: '0 auto 1rem auto' }} />
-                                                                <p style={{ fontWeight: 600, fontSize: '1.1rem' }}>All soft skills have been evaluated!</p>
-                                                            </div>
-                                                        ) : (
-                                                            <>
-                                                                <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', fontSize: '0.95rem' }}>
-                                                                    Answer all {unevaluatedSoftSkills.length} scenario{unevaluatedSoftSkills.length > 1 ? 's' : ''} below, then click <strong>Submit All</strong> to save your results.
-                                                                </p>
-                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                                                                    {SOFT_SKILLS.map(softSkill => {
-                                                                        const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === softSkill.toLowerCase());
-                                                                        if (isAlreadyOwned) {
-                                                                            return (
-                                                                                <div key={softSkill} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '1rem', background: 'var(--color-white)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', opacity: 0.6 }}>
-                                                                                    <CheckCircle2 size={18} color="var(--color-success)" />
-                                                                                    <span style={{ fontWeight: 600 }}>{softSkill}</span>
-                                                                                    <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Already evaluated</span>
-                                                                                </div>
-                                                                            );
-                                                                        }
-                                                                        const questionObj = getShortEvaluationForSkill(softSkill, 'Soft');
-                                                                        return (
-                                                                            <div key={softSkill} style={{ borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', overflow: 'hidden' }}>
-                                                                                <div style={{ background: 'var(--color-primary)', padding: '0.75rem 1.25rem' }}>
-                                                                                    <span style={{ fontWeight: 700, color: '#fff', fontSize: '0.95rem' }}>{softSkill}</span>
-                                                                                </div>
-                                                                                <div style={{ padding: '1.25rem', background: 'var(--color-bg-paper)', borderBottom: '1px solid var(--color-border)' }}>
-                                                                                    <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: 500, lineHeight: 1.6, color: 'var(--color-text)' }}>
-                                                                                        {questionObj.question}
-                                                                                    </p>
-                                                                                </div>
-                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '1rem', background: 'var(--color-white)' }}>
-                                                                                    {questionObj.options.map((option, idx) => (
-                                                                                        <label
-                                                                                            key={idx}
-                                                                                            style={{
-                                                                                                display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.9rem 1rem',
-                                                                                                borderRadius: 'var(--radius-sm)',
-                                                                                                border: softSkillAnswers[softSkill] === idx ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
-                                                                                                background: softSkillAnswers[softSkill] === idx ? 'rgba(59,130,246,0.05)' : 'transparent',
-                                                                                                cursor: 'pointer', transition: 'all 0.15s'
-                                                                                            }}
-                                                                                        >
-                                                                                            <input
-                                                                                                type="radio"
-                                                                                                name={`soft_${softSkill}`}
-                                                                                                checked={softSkillAnswers[softSkill] === idx}
-                                                                                                onChange={() => setSoftSkillAnswers(prev => ({ ...prev, [softSkill]: idx }))}
-                                                                                                style={{ marginTop: '0.2rem', accentColor: 'var(--color-primary)' }}
-                                                                                            />
-                                                                                            <span style={{ fontSize: '0.9rem', lineHeight: 1.5 }}>{option.text}</span>
-                                                                                        </label>
-                                                                                    ))}
-                                                                                </div>
-                                                                            </div>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1.5rem' }}>
-                                                                    <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-                                                                    <Button onClick={submitAllSoftSkills} disabled={!allSoftAnswered}>
-                                                                        Submit All ({Object.keys(softSkillAnswers).length}/{unevaluatedSoftSkills.length} answered)
-                                                                    </Button>
-                                                                </div>
-                                                            </>
-                                                        )}
+                                                        <p style={{ fontSize: '0.95rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>Select a soft skill to add to your profile and begin the assessment flow.</p>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.85rem' }}>
+                                                            {SOFT_SKILLS.map(softSkill => {
+                                                                return (
+                                                                    <button 
+                                                                        key={softSkill} 
+                                                                        onClick={() => startShortTest(softSkill, 'Soft')}
+                                                                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '1rem', background: 'var(--color-white)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'border 0.2s' }}
+                                                                    >
+                                                                        <span style={{ fontSize: '0.95rem', fontWeight: '500', color: 'var(--color-text)' }}>{softSkill}</span>
+                                                                        <ChevronLeft size={16} style={{ transform: 'rotate(180deg)', color: 'var(--color-primary)' }} />
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
                                                     </div>
                                                 )}
 
@@ -1149,7 +1225,7 @@ export const Assessment = () => {
                                 
                                 <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', alignItems: 'flex-start' }}>
                                     <Button variant="outline" onClick={() => setWantsToReassess(true)} style={{ padding: '0.75rem 2rem' }}>Reassess</Button>
-                                    {activeSkillData.category !== 'Soft' && (
+                                    {!skillDetails?.isSoft && activeSkillData.category !== 'Soft' && (
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
                                             <Button className="btn-primary" disabled style={{ padding: '0.75rem 2rem', opacity: 0.6, cursor: 'not-allowed' }}>Show Matching</Button>
                                             <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>Coming soon</span>
@@ -1171,19 +1247,29 @@ export const Assessment = () => {
                             boxShadow: 'var(--shadow-sm)'
                         }}>
                             <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
-                                <button
-                                    onClick={() => setSubmissionMode('quiz')}
-                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'quiz' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'quiz' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
-                                >
-                                    AI Quiz
-                                </button>
+                                {!skillDetails?.isSoft && (
+                                    <button
+                                        onClick={() => setSubmissionMode('quiz')}
+                                        style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'quiz' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'quiz' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                    >
+                                        AI Quiz
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => setSubmissionMode('text')}
                                     style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'text' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'text' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
                                 >
                                     Write Answer
                                 </button>
-                                {skillDetails.category !== 'Soft' && (
+                                {skillDetails?.isSoft && (
+                                    <button
+                                        onClick={() => setSubmissionMode('voice')}
+                                        style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'voice' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'voice' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                    >
+                                        Voice Recording
+                                    </button>
+                                )}
+                                {!skillDetails?.isSoft && (
                                     <button
                                         onClick={() => setSubmissionMode('upload')}
                                         style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'upload' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'upload' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
@@ -1199,21 +1285,35 @@ export const Assessment = () => {
                                     borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
                                     color: 'var(--color-primary)'
                                 }}>
-                                    {submissionMode === 'quiz' ? <CheckCircle2 size={24} /> : (submissionMode === 'text' ? <FileText size={24} /> : <UploadCloud size={24} />)}
+                                    {submissionMode === 'voice' ? <Mic size={24} /> : submissionMode === 'quiz' ? <CheckCircle2 size={24} /> : (submissionMode === 'text' ? <FileText size={24} /> : <UploadCloud size={24} />)}
                                 </div>
                                 <h3 style={{ margin: 0 }}>
-                                    {submissionMode === 'quiz' ? 'AI Generated Evaluation Quiz' : (submissionMode === 'text' ? 'Practical Scenario Task' : 'Upload Work Sample')}
+                                    {submissionMode === 'voice' ? 'Spoken Scenario Task' : submissionMode === 'quiz' ? 'AI Generated Evaluation Quiz' : (submissionMode === 'text' ? 'Practical Scenario Task' : 'Upload Work Sample')}
                                 </h3>
                             </div>
 
                             {submissionMode !== 'quiz' && (
-                                <div style={{ 
-                                    background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', 
-                                    marginBottom: '2rem', borderLeft: '4px solid var(--color-primary)' 
-                                }}>
-                                    <p style={{ margin: 0, lineHeight: 1.6, fontWeight: 500, fontSize: '1.05rem', color: 'var(--color-text)' }}>
-                                        {evaluationData.question}
-                                    </p>
+                                <div style={{ marginBottom: '2rem' }}>
+                                    {evaluationData.researchImportance && (
+                                        <div style={{ background: 'rgba(59, 130, 246, 0.05)', padding: '1rem 1.25rem', borderRadius: '12px', marginBottom: '1rem', border: '1px solid rgba(59, 130, 246, 0.1)' }}>
+                                            <div style={{ fontWeight: 600, marginBottom: '0.35rem', color: 'var(--color-primary)' }}>Why this matters</div>
+                                            <div style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>{evaluationData.researchImportance}</div>
+                                        </div>
+                                    )}
+                                    {skillDetails?.isSoft && evaluationData?.allScenarios ? (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                            {evaluationData.allScenarios.map((scenario, idx) => (
+                                                <div key={idx} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
+                                                    <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>Scenario {idx + 1}</div>
+                                                    <p style={{ margin: 0, lineHeight: 1.6, fontWeight: 500, fontSize: '1.05rem', color: 'var(--color-text)' }}>{scenario.question}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', marginBottom: '2rem', borderLeft: '4px solid var(--color-primary)' }}>
+                                            <p style={{ margin: 0, lineHeight: 1.6, fontWeight: 500, fontSize: '1.05rem', color: 'var(--color-text)' }}>{evaluationData.question}</p>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -1259,24 +1359,102 @@ export const Assessment = () => {
                                     )}
                                 </div>
                             ) : submissionMode === 'text' ? (
-                                <div style={{ position: 'relative' }}>
-                                    <textarea 
-                                        className="form-control"
-                                        placeholder="Write your detailed, scenario-based answer here. Assume you are communicating with senior engineers..."
-                                        style={{ 
-                                            minHeight: '250px', width: '100%', padding: '1.25rem', fontFamily: 'system-ui, sans-serif', 
-                                            fontSize: '1rem', lineHeight: 1.6, borderRadius: 'var(--radius-md)',
-                                            border: '1px solid var(--color-border)', resize: 'vertical'
-                                        }}
-                                        value={submission}
-                                        onChange={(e) => setSubmission(e.target.value)}
-                                    />
-                                    <div style={{ 
-                                        position: 'absolute', bottom: '1rem', right: '1.5rem', 
-                                        color: 'var(--color-text-muted)', fontSize: '0.85rem'
-                                    }}>
-                                        {submission.length} characters
+                                skillDetails?.isSoft && evaluationData?.allScenarios ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                        {evaluationData.allScenarios.map((_, idx) => (
+                                            <div key={idx} style={{ position: 'relative' }}>
+                                                <textarea 
+                                                    className="form-control"
+                                                    placeholder={`Write your detailed scenario-based roleplay answer for Scenario ${idx + 1} here. Be descriptive...`}
+                                                    style={{ 
+                                                        minHeight: '200px', width: '100%', padding: '1.25rem', fontFamily: 'system-ui, sans-serif', 
+                                                        fontSize: '1rem', lineHeight: 1.6, borderRadius: 'var(--radius-md)',
+                                                        border: '1px solid var(--color-border)', resize: 'vertical'
+                                                    }}
+                                                    value={multiAnswers[idx] || ''}
+                                                    onChange={(e) => setMultiAnswers(prev => ({...prev, [idx]: e.target.value}))}
+                                                />
+                                                <div style={{ 
+                                                    position: 'absolute', bottom: '1rem', right: '1.5rem', 
+                                                    color: 'var(--color-text-muted)', fontSize: '0.85rem'
+                                                }}>
+                                                    {(multiAnswers[idx] || '').length} characters
+                                                </div>
+                                            </div>
+                                        ))}
                                     </div>
+                                ) : (
+                                    <div style={{ position: 'relative' }}>
+                                        <textarea 
+                                            className="form-control"
+                                            placeholder="Write your detailed, scenario-based answer here. Assume you are communicating with senior engineers..."
+                                            style={{ 
+                                                minHeight: '250px', width: '100%', padding: '1.25rem', fontFamily: 'system-ui, sans-serif', 
+                                                fontSize: '1rem', lineHeight: 1.6, borderRadius: 'var(--radius-md)',
+                                                border: '1px solid var(--color-border)', resize: 'vertical'
+                                            }}
+                                            value={submission}
+                                            onChange={(e) => setSubmission(e.target.value)}
+                                        />
+                                        <div style={{ 
+                                            position: 'absolute', bottom: '1rem', right: '1.5rem', 
+                                            color: 'var(--color-text-muted)', fontSize: '0.85rem'
+                                        }}>
+                                            {submission.length} characters
+                                        </div>
+                                    </div>
+                                )
+                            ) : submissionMode === 'voice' ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                    {skillDetails?.isSoft && evaluationData?.allScenarios ? (
+                                        evaluationData.allScenarios.map((_, idx) => (
+                                            <div key={idx} style={{ padding: '1.5rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+                                                <div style={{ fontWeight: 600, marginBottom: '1rem' }}>Record Scenario {idx + 1}</div>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                                    <Button 
+                                                        variant={isRecording && recordingIndex === idx ? "danger" : "outline"}
+                                                        onClick={() => isRecording && recordingIndex === idx ? stopRecording() : startRecording(idx)}
+                                                        disabled={isRecording && recordingIndex !== null && recordingIndex !== idx}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '200px' }}
+                                                    >
+                                                        {isRecording && recordingIndex === idx ? <><Square size={16} /> Stop Record</> : <><Mic size={16} /> Record Voice</>}
+                                                    </Button>
+                                                    
+                                                    {multiAudioURLs[idx] && (
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
+                                                            <audio src={multiAudioURLs[idx]} controls style={{ height: '36px', flex: 1 }} />
+                                                            <button onClick={() => setMultiAudioURLs(prev => ({...prev, [idx]: null}))} style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '0.5rem' }}>
+                                                                <Trash2 size={16} />
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div style={{ padding: '1.5rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+                                            <div style={{ fontWeight: 600, marginBottom: '1rem' }}>Record Audio Answer</div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                                <Button 
+                                                    variant={isRecording && recordingIndex === null ? "danger" : "outline"}
+                                                    onClick={() => isRecording && recordingIndex === null ? stopRecording() : startRecording()}
+                                                    disabled={isRecording && recordingIndex !== null}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '200px' }}
+                                                >
+                                                    {isRecording && recordingIndex === null ? <><Square size={16} /> Stop Record</> : <><Mic size={16} /> Record Voice</>}
+                                                </Button>
+                                                
+                                                {audioURL && (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
+                                                        <audio src={audioURL} controls style={{ height: '36px', flex: 1 }} />
+                                                        <button onClick={() => setAudioURL(null)} style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '0.5rem' }}>
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ) : (
                                 <div style={{ marginTop: '1rem', padding: '2rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '2px dashed var(--color-border)', textAlign: 'center' }}>
@@ -1335,7 +1513,8 @@ export const Assessment = () => {
                                     onClick={handleSubmitAssessment} 
                                     disabled={
                                         (submissionMode === 'quiz' && (quizLoading || quizAnswers.some(a => a === null))) || 
-                                        (submissionMode === 'text' && !submission.trim()) || 
+                                        (submissionMode === 'text' && (skillDetails?.isSoft ? Object.values(multiAnswers).every(a => !a.trim()) : !submission.trim())) || 
+                                        (submissionMode === 'voice' && (skillDetails?.isSoft ? Object.values(multiAudioBlobs).some(b => !b) : !audioBlob)) || 
                                         (submissionMode === 'upload' && !selectedFile) || 
                                         isSubmitting
                                     }

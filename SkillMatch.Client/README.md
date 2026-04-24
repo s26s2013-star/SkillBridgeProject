@@ -22,10 +22,19 @@ npm install
 npm run dev
 
 Backend:
-cd SkillMatch.Api
-dotnet restore
-dotnet run
+cd backend
+uvicorn main:app --reload
+
 
 git add .
 git commit -m "update page"
 git push
+
+#لما نرجع نشتغل على البرانش مالي 
+git checkout Nusayba
+git merge main
+#لما نسوي الدمج النهائي
+git checkout main
+git merge Nusayba
+git merge eman
+git merge manar

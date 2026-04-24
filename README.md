@@ -10,3 +10,4 @@ This project helps match students skills with job market requirements using AI.
 ## Project Structure
 - SkillMatch.Client → Frontend (React)
 - SkillMatch.Api → Backend
+

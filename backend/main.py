@@ -7,6 +7,58 @@ from typing import Any, Dict, Optional, List
 from fastapi.middleware.cors import CORSMiddleware
 from database import get_db
 import random
+import spacy
+import nltk
+from nltk.corpus import wordnet
+import numpy as np
+
+# Initialize Local NLP Engine
+try:
+    nlp = spacy.load("en_core_web_md")
+except Exception:
+    nlp = None
+
+def get_synonyms(word):
+    synonyms = {word.lower()}
+    for syn in wordnet.synsets(word):
+        for l in syn.lemmas():
+            synonyms.add(l.name().lower().replace('_', ' '))
+    return synonyms
+
+def calculate_local_nlp_score(answers_text, keywords_list):
+    """Deterministic score based on semantic similarity and keyword/synonym matching."""
+    if not nlp or not answers_text.strip():
+        return 40, "Beginner", "NLP Engine initialization or input issue."
+
+    found_keywords = []
+    total_found = 0
+    for kw in keywords_list:
+        syns = get_synonyms(kw)
+        if any(s in answers_text.lower() for s in syns):
+            total_found += 1
+            found_keywords.append(kw)
+
+    keyword_score = (total_found / len(keywords_list)) * 100 if keywords_list else 100
+    keyword_score = min(keyword_score, 100)
+
+    keywords_clean = " ".join(keywords_list)
+    doc_user = nlp(answers_text)
+    doc_target = nlp(keywords_clean)
+    semantic_score = doc_user.similarity(doc_target) * 100 if doc_target.vector_norm > 0 else 50
+    semantic_score = min(max(semantic_score, 0), 100)
+
+    final_score = (semantic_score * 0.7) + (keyword_score * 0.3)
+
+    if final_score >= 85:
+        level = "Advanced"
+    elif final_score >= 60:
+        level = "Intermediate"
+    else:
+        level = "Beginner"
+
+    feedback = f"NLP Analysis: Semantic Clarity ({int(semantic_score)}%) + Keyword/Synonym Coverage ({int(keyword_score)}%). "
+    feedback += f"Found concepts: {', '.join(found_keywords)}."
+    return int(final_score), level, feedback
 
 class UserRegister(BaseModel):
     name: str
@@ -83,7 +135,7 @@ app.add_middleware(
 def get_skills(major: Optional[str] = None):
     db = get_db()
     skills_collection = db["skills"]
-    
+
     query: Dict[str, Any] = {}
     if major:
         query["$or"] = [
@@ -91,16 +143,34 @@ def get_skills(major: Optional[str] = None):
             {"skill_name": {"$regex": major, "$options": "i"}},
             {"category": {"$regex": major, "$options": "i"}}
         ]
-        
-    # Fetch all skills from the collection
+
     skills_cursor = skills_collection.find(query)
-    
     skills_list = []
     for skill in skills_cursor:
-        # Convert _id from ObjectId to string to avoid JSON serialization error
         skill["_id"] = str(skill["_id"])
         skills_list.append(skill)
-        
+
+    soft_skills_bank = [
+        {"skill_name": "Communication", "category": "Soft", "major": "General"},
+        {"skill_name": "Teamwork", "category": "Soft", "major": "General"},
+        {"skill_name": "Problem Solving", "category": "Soft", "major": "General"},
+        {"skill_name": "Time Management", "category": "Soft", "major": "General"},
+        {"skill_name": "Adaptability", "category": "Soft", "major": "General"}
+    ]
+
+    for s in soft_skills_bank:
+        if not major or major.lower() in s["skill_name"].lower() or major.lower() in s["category"].lower() or major.lower() == "soft":
+            if not any(item.get("skill_name", "").lower() == s["skill_name"].lower() for item in skills_list):
+                skills_list.append({
+                    "_id": f"std-{s['skill_name'].lower()}",
+                    "skill_name": s["skill_name"],
+                    "category": s["category"],
+                    "major": s["major"],
+                    "beginner_criteria": "Core proficiency in this soft skill.",
+                    "intermediate_criteria": "Advanced application of this soft skill.",
+                    "advanced_criteria": "Mastery of this soft skill."
+                })
+
     return skills_list
 
 @app.get("/api/specializations")
@@ -145,17 +215,114 @@ def get_skills_by_specialization(major: str):
 @app.get("/api/skills/for-user")
 def get_skills_for_user_optimized(email: str):
     db = get_db()
-    
-    # 1. Fetch user to get major
+
     user_doc = db["users"].find_one({"email": email.strip().lower()})
     if not user_doc:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
     major = user_doc.get("major", "").strip()
     result = {"major": major, "skills": []}
-    
+
+    soft_skills_bank = [
+        {
+            "name": "Communication",
+            "type": "Soft",
+            "shortDescription": "Articulate ideas clearly and listen actively in a professional setting.",
+            "details": {
+                "importance": "Critical for team alignment, client relations, and conflict resolution.",
+                "intermediate": "Can handle difficult conversations and present complex ideas logically.",
+                "advanced": "Master of persuasion, negotiation, and high-impact executive communication.",
+                "components": ["Active Listening", "Public Speaking", "Writing proficiency"],
+                "assessment": "Evaluate via verbal/written case studies."
+            }
+        },
+        {
+            "name": "Teamwork",
+            "type": "Soft",
+            "shortDescription": "Collaborate effectively with diverse groups to achieve shared goals.",
+            "details": {
+                "importance": "The backbone of agile and scalable IT environments.",
+                "intermediate": "Actively facilitates sub-group collaboration and supports peers.",
+                "advanced": "Builds high-performing cultures and manages cross-functional team dynamics.",
+                "components": ["Conflict Resolution", "Reliability", "Supportive Leadership"],
+                "assessment": "Evaluate via situational collaboration scenarios."
+            }
+        },
+        {
+            "name": "Problem Solving",
+            "type": "Soft",
+            "shortDescription": "Analyze complex issues and implement creative, logical solutions.",
+            "details": {
+                "importance": "Essential for debugging, architecture design, and strategic planning.",
+                "intermediate": "Identifies root causes quickly and proposes multi-faceted solutions.",
+                "advanced": "Anticipates systemic problems and designs robust preventative frameworks.",
+                "components": ["Critical Thinking", "Creativity", "Analytical Reasoning"],
+                "assessment": "Evaluate via logic-based technical and soft skill case studies."
+            }
+        },
+        {
+            "name": "Time Management",
+            "type": "Soft",
+            "shortDescription": "Prioritize tasks and manage schedules to meet deadlines efficiently.",
+            "details": {
+                "importance": "Critical for maintaining project velocity and personal productivity.",
+                "intermediate": "Successfully manages multiple competing priorities without missing deadlines.",
+                "advanced": "Optimizes entire workflows and mentors others on high-leverage work.",
+                "components": ["Prioritization", "Delegation", "Planning"],
+                "assessment": "Evaluate via workload management scenarios."
+            }
+        },
+        {
+            "name": "Adaptability",
+            "type": "Soft",
+            "shortDescription": "Remain flexible and productive in the face of changing environments.",
+            "details": {
+                "importance": "Vital in the fast-paced, ever-evolving tech landscape.",
+                "intermediate": "Quickly learns new tools and processes with minimal friction.",
+                "advanced": "Thrives in ambiguity and leads teams through significant pivot periods.",
+                "components": ["Flexibility", "Growth Mindset", "Resilience"],
+                "assessment": "Evaluate via change-management case studies."
+            }
+        }
+    ]
+
+    for s in soft_skills_bank:
+        result["skills"].append({
+            "id": f"std-soft-{s['name'].lower()}",
+            "name": s["name"],
+            "type": s["type"],
+            "shortDescription": s["shortDescription"],
+            "details": s["details"]
+        })
+
     if not major or major == "Not specified":
         return result
+
+    query = {"major": {"$regex": f"^{major}$", "$options": "i"}}
+    skills_cursor = list(db["skills"].find(query))
+    if not skills_cursor:
+        query_fallback = {"major": {"$regex": major, "$options": "i"}}
+        skills_cursor = list(db["skills"].find(query_fallback))
+
+    for s in skills_cursor:
+        if any(existing["name"].lower() == s.get("skill_name", "").lower() for existing in result["skills"]):
+            continue
+        result["skills"].append({
+            "id": str(s["_id"]),
+            "name": s.get("skill_name", ""),
+            "type": s.get("category", "Technical"),
+            "shortDescription": s.get("beginner_criteria", ""),
+            "details": {
+                "importance": s.get("beginner_criteria", ""),
+                "intermediate": s.get("intermediate_criteria", ""),
+                "advanced": s.get("advanced_criteria", ""),
+                "components": s.get("key_components", []),
+                "assessment": s.get("assessment_description", ""),
+                "source": s.get("source", "")
+            }
+        })
+
+    return result
         
     # 2. Fetch specific fields for skills matching the major
     query = {"major": {"$regex": f"^{major}$", "$options": "i"}}
@@ -649,6 +816,237 @@ async def evaluate_quiz_submission(data: QuizSubmission):
         "suggestion": suggestion, 
         "score": total_score, 
         "level": calculated_level
+    }
+
+
+
+@app.post("/api/user/assessment/text_evaluate")
+async def evaluate_text_assessment(
+    email: str = Form(...),
+    skill_name: str = Form(...),
+    question: str = Form(...),
+    expected_keywords: str = Form(""),
+    submission_text: str = Form(...)
+):
+    db = get_db()
+    users_collection = db["users"]
+
+    user = users_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    import os
+    import json
+    
+    if len(submission_text.split()) < 10:
+        total_score = 0
+        calculated_level = "Beginner"
+        suggestion = "Submission too short or meaningless. Please provide highly descriptive, scenario-based answers."
+        status = "Pending"
+    else:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            total_score = 40
+            calculated_level = "Beginner"
+            suggestion = "AI evaluation skipped. Missing API Key."
+            status = "Pending"
+        else:
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                
+                prompt = f"""
+                You are an expert HR and technical recruiter. Evaluate this soft skills submission for: {skill_name}.
+                
+                Questions/Scenarios:
+                {question}
+                
+                Applicant's Answers:
+                {submission_text}
+                
+                Expected Themes/Keywords: {expected_keywords}
+                
+                Score strictly. Meaningless, empty, short, shallow, or irrelevant answers must score very low. 
+                Strong, detailed, scenario-based answers showing emotional intelligence score higher.
+                Calculate:
+                Semantic Relevance (0-100)
+                Keyword Matching (0-100)
+                Final Score = (Semantic Relevance * 0.7) + (Keyword Matching * 0.3)
+                Level = "Advanced" if >= 85, "Intermediate" if >= 60, else "Beginner"
+                
+                Return ONLY a JSON object exactly matching this schema (NO MARKDOWN or backticks):
+                {{
+                  "semantic_relevance": 50,
+                  "keyword_matching": 20,
+                  "final_score": 40,
+                  "level": "Beginner",
+                  "feedback": "Concise paragraph evaluating the behavioral response."
+                }}
+                """
+                response = model.generate_content(prompt)
+                raw_text = response.text.replace('```json', '').replace('```', '').strip()
+                ai_data = json.loads(raw_text)
+                
+                total_score = int(ai_data.get("final_score", 0))
+                calculated_level = ai_data.get("level", "Beginner")
+                suggestion = ai_data.get("feedback", "No feedback provided.")
+                
+                total_score = min(max(total_score, 0), 100)
+                is_valid = total_score >= 60
+                status = "Verified" if is_valid else "Pending"
+            except Exception as e:
+                total_score = 40
+                calculated_level = "Beginner"
+                suggestion = f"AI Evaluation error: {str(e)}"
+                status = "Pending"
+
+    skills = user.get("skills", [])
+    updated = False
+    for i, s in enumerate(skills):
+        s_name = s if isinstance(s, str) else s.get("name", "")
+        if s_name.lower() == skill_name.lower():
+            if isinstance(s, str):
+                skills[i] = {
+                    "name": s, "status": status, "progress": total_score,
+                    "level": calculated_level, "suggestion": suggestion
+                }
+            else:
+                current_skill = dict(s)
+                current_skill.update({
+                    "status": status, "progress": total_score,
+                    "level": calculated_level, "suggestion": suggestion
+                })
+                skills[i] = current_skill
+            updated = True
+            break
+
+    if not updated:
+        skills.append({
+            "name": skill_name, "status": status, "progress": total_score,
+            "level": calculated_level, "suggestion": suggestion
+        })
+
+    users_collection.update_one({"email": email}, {"$set": {"skills": skills}})
+    return {
+        "status": status,
+        "suggestion": suggestion,
+        "score": total_score,
+        "level": calculated_level
+    }
+
+@app.post("/api/user/assessment/voice_evaluate_multi")
+async def evaluate_voice_assessment_multi(
+    email: str = Form(...),
+    skill_name: str = Form(...),
+    expected_keywords: str = Form(""),
+    file0: UploadFile = File(None),
+    file1: UploadFile = File(None),
+    file2: UploadFile = File(None)
+):
+    import os
+
+    db = get_db()
+    users_collection = db["users"]
+
+    user = users_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Gemini API Key missing")
+
+    files = [f for f in [file0, file1, file2] if f is not None]
+    if not files:
+        raise HTTPException(status_code=400, detail="No recordings provided")
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
+        full_transcript = []
+        for idx, f in enumerate(files):
+            contents = await f.read()
+            audio_part = {"mime_type": f.content_type or "audio/webm", "data": contents}
+            prompt = f"Transcribe answer for Scenario {idx+1}. Output ONLY the text."
+            response = model.generate_content([audio_part, prompt])
+            full_transcript.append(f"[Scenario {idx+1}] {response.text.strip()}")
+
+        combined_text = "\n\n".join(full_transcript)
+        
+        import json
+        if len(combined_text.split()) < 10:
+            total_score = 0
+            calculated_level = "Beginner"
+            suggestion = f"Transcripts:\n{combined_text}\n\nAudio transcription was too short, silent, or meaningless."
+            status = "Pending"
+        else:
+            prompt = f"""
+            You are an expert HR and technical recruiter. Evaluate this soft skills TRANSCRIBED VOICE submission for: {skill_name}.
+            
+            Applicant's Transcribed Answers:
+            {combined_text}
+            
+            Expected Themes/Keywords: {expected_keywords}
+            
+            Score strictly. Meaningless, short, shallow, or irrelevant answers must score very low. 
+            Strong, detailed, scenario-based answers showing emotional intelligence score higher.
+            Calculate:
+            Semantic Relevance (0-100)
+            Keyword Matching (0-100)
+            Final Score = (Semantic Relevance * 0.7) + (Keyword Matching * 0.3)
+            Level = "Advanced" if >= 85, "Intermediate" if >= 60, else "Beginner"
+            
+            Return ONLY a JSON object exactly matching this schema (NO MARKDOWN or backticks):
+            {{
+              "final_score": 40,
+              "level": "Beginner",
+              "feedback": "Concise paragraph evaluating the behavioral response."
+            }}
+            """
+            eval_resp = model.generate_content(prompt)
+            raw_text = eval_resp.text.replace('```json', '').replace('```', '').strip()
+            ai_data = json.loads(raw_text)
+            
+            total_score = int(ai_data.get("final_score", 0))
+            calculated_level = ai_data.get("level", "Beginner")
+            ai_feedback = ai_data.get("feedback", "No feedback provided.")
+            
+            suggestion = f"Transcripts:\n{combined_text}\n\nAI Feedback:\n{ai_feedback}"
+            total_score = min(max(total_score, 0), 100)
+            is_valid = total_score >= 60
+            status = "Verified" if is_valid else "Pending"
+    except Exception as e:
+        suggestion = f"Multi-Voice Evaluation Error: {str(e)}"
+        total_score = 40
+        calculated_level = "Beginner"
+        status = "Pending"
+
+    skills = user.get("skills", [])
+    updated = False
+    for i, s in enumerate(skills):
+        s_name = s if isinstance(s, str) else s.get("name", "")
+        if s_name.lower() == skill_name.lower():
+            skill_update = {
+                "name": skill_name, "status": status, "progress": total_score,
+                "level": calculated_level, "suggestion": suggestion
+            }
+            skills[i] = skill_update
+            updated = True
+            break
+
+    if not updated:
+        skills.append({
+            "name": skill_name, "status": status, "progress": total_score,
+            "level": calculated_level, "suggestion": suggestion
+        })
+
+    users_collection.update_one({"email": email}, {"$set": {"skills": skills}})
+    return {
+        "status": status, "suggestion": suggestion,
+        "score": total_score, "level": calculated_level
     }
 
 @app.get("/api/technical-questions")
