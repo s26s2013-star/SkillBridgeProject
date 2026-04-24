@@ -8,6 +8,7 @@ import { Assessment } from './pages/Assessment';
 import { Jobs } from './pages/Jobs';
 import { Matches } from './pages/Matches';
 import { Profile } from './pages/Profile';
+import { UpskillPlan } from './pages/UpskillPlan';
 import { AuthLayout } from './components/AuthLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
@@ -47,6 +48,7 @@ function App() {
         <Route path="/jobs" element={<Jobs />} />
         <Route path="/matches" element={<Matches />} />
         <Route path="/profile" element={<Profile />} />
+        <Route path="/upskill-plan" element={<UpskillPlan />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -4,32 +4,98 @@ import logging
 import pandas as pd
 import sys
 import os
-import certifi 
-ca = certifi.where()
+import certifi
+from urllib.parse import quote_plus
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Placeholder for the MongoDB connection string
-MONGO_URI = "mongodb+srv://manaralnabhani95_db_user:B%26techp5@cluster0.wjwh5vq.mongodb.net/SkillBridgeDB?appName=Cluster0"
+# ca for SSL certs
+ca = certifi.where()
+
+# MongoDB connection string (move to environment variable for production)
+# Escape special characters in password (e.g., @, %, &, etc.)
+# Your password contains 'B&techp5' – the '&' must be URL-encoded as '%26'
+# If you cannot change password, use quote_plus
+MONGO_USER = "manaralnabhani95_db_user"
+MONGO_PASSWORD = "B%26techp5"   # '&' is replaced with %26
+MONGO_CLUSTER = "cluster0.wjwh5vq.mongodb.net"
+MONGO_DB = "SkillBridgeDB"
+
+MONGO_URI = f"mongodb+srv://{MONGO_USER}:{MONGO_PASSWORD}@{MONGO_CLUSTER}/{MONGO_DB}?retryWrites=true&w=majority&appName=Cluster0"
+
+# --- SINGLE GLOBAL CLIENT (reused across all requests) ---
+_client = None
+_db = None
+
+def get_client():
+    """Return a single MongoDB client instance (created once)."""
+    global _client
+    if _client is None:
+        try:
+            # PyMongo automatically handles connection pooling
+            # Use certifi for TLS/SSL certificate verification
+            _client = pymongo.MongoClient(MONGO_URI, tlsCAFile=ca)
+            # Test connection
+            _client.admin.command('ping')
+            logger.info("MongoDB client created and connected with SSL verification.")
+        except ConnectionFailure as e:
+            logger.error(f"Could not connect to MongoDB: {e}")
+            raise
+    return _client
 
 def get_db():
+    """Return the database instance (reuses the same client)."""
+    global _db
+    if _db is None:
+        client = get_client()
+        _db = client[MONGO_DB]
+        # Create indexes for performance
+        create_indexes(_db)
+    return _db
+
+def create_indexes(db):
+    """Create indexes on frequently queried fields to speed up queries."""
+    logger.info("Creating database indexes...")
+    
     try:
-        client = pymongo.MongoClient(MONGO_URI, tlsCAFile=ca)
-        # Verify connection
-        client.admin.command('ping')
-        db = client["SkillBridgeDB"]
-        return db
-    except ConnectionFailure as e:
-        logger.error(f"Could not connect to MongoDB: {e}")
-        raise
+        # Skills collection
+        skills = db["skills"]
+        skills.create_index("skill_name")                       # for lookups by name
+        skills.create_index("major")                            # for filtering by major
+        skills.create_index("category")                         # technical vs soft
+        
+        # Users collection
+        users = db["users"]
+        users.create_index("email", unique=True)                # for login/profile lookups
+        
+        # job_market collection
+        jobs = db["job_market"]
+        jobs.create_index("Job_Title")
+        jobs.create_index("Company")
+        jobs.create_index("Location")
+        jobs.create_index("Key_Skills")                         # for skill search
+        
+        # major_assessments collection
+        assessments = db["major_assessments"]
+        assessments.create_index("major", unique=True)
+
+        # Technical questions collection
+        tech_qs = db["technical_questions"]
+        tech_qs.create_index([("skill_name", 1), ("question_number", 1)])
+        
+        logger.info("Indexes created (or already exist).")
+    except Exception as e:
+        logger.warning(f"Could not create some indexes (likely due to conflicts): {e}")
+
+# --- Seeding functions ---
 
 def seed_skills():
     db = get_db()
     skills_collection = db["skills"]
     
-    # 30 skills covering the specified majors:
-    # Information System, Software Engineering, Network Computing, Web & Mobile Technologies, Cloud Computing, Data Science & AI, Cyber Security
+    # Comprehensive skill list from Stage 3
     skills_data = [
         {
             "major": "Cloud Computing",
@@ -668,13 +734,16 @@ def seed_skills():
             "source": "Curriculum Mapping"
         },
     ]
-
+    
     try:
-        if skills_collection.count_documents({}) == 0:
-            result = skills_collection.insert_many(skills_data)
-            logger.info(f"Successfully seeded {len(result.inserted_ids)} skills into the database.")
-        else:
-            logger.info("skills collection already seeded, skipping to avoid duplicates.")
+        # Upsert to avoid duplicates and ensure freshness
+        for skill in skills_data:
+            skills_collection.update_one(
+                {"skill_name": skill["skill_name"], "major": skill["major"]},
+                {"$set": skill},
+                upsert=True
+            )
+        logger.info(f"Successfully seeded/updated {len(skills_data)} skills.")
     except Exception as e:
         logger.error(f"Failed to seed skills collection: {e}")
         raise
@@ -786,13 +855,12 @@ def seed_technical_questions():
     ]
     
     try:
-        # Clear out the temporary documents from the previous step without dropping the collection
+        # Clear and re-seed to ensure consistency
         tech_qs_collection.delete_many({})
-        
         result = tech_qs_collection.insert_many(questions_data)
-        logger.info(f"Successfully seeded {len(result.inserted_ids)} finalized technical questions into the database.")
+        logger.info(f"Successfully seeded {len(result.inserted_ids)} technical questions.")
     except Exception as e:
-        logger.error(f"Failed to seed technical_questions collection: {e}")
+        logger.error(f"Failed to seed technical_questions: {e}")
         raise
 
 def seed_market_data():
@@ -807,22 +875,19 @@ def seed_market_data():
                 return
                 
             df = pd.read_csv(csv_path, encoding='latin-1')
-            
-            # Clean data: drop completely empty rows, fill NaNs with empty string
             df = df.dropna(how='all')
             df = df.fillna('')
-            
             jobs_data = df.to_dict(orient='records')
             
             if jobs_data:
                 result = job_market_collection.insert_many(jobs_data)
-                logger.info(f"Successfully seeded {len(result.inserted_ids)} jobs into the job_market collection.")
+                logger.info(f"Inserted {len(result.inserted_ids)} jobs.")
             else:
-                logger.info("CSV was empty, no jobs inserted.")
+                logger.info("CSV empty.")
         else:
-            logger.info("job_market collection already seeded, skipping.")
+            logger.info("job_market already seeded.")
     except Exception as e:
-        logger.error(f"Failed to seed job_market collection: {e}")
+        logger.error(f"Failed to seed jobs: {e}")
         raise
 
 if __name__ == "__main__":
@@ -841,8 +906,7 @@ if __name__ == "__main__":
         else:
             print("Usage: python database.py [skills|jobs|tech_qs|all]")
     else:
-        # Default behavior to avoid regressions
-        logger.info("Running general seeder script...")
+        logger.info("Running general seeder...")
         seed_skills()
         seed_market_data()
         seed_technical_questions()
