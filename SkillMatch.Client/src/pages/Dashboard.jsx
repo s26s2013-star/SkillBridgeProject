@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
+import { API_BASE_URL } from '../config/api';
 import heroImage from "../assets/dashboard-hero.png";
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { SummaryCards } from '../components/dashboard/SummaryCards';
@@ -55,17 +56,17 @@ export const Dashboard = () => {
     useEffect(() => {
         const fetchUserData = async () => {
             try {
-                const profileResponse = await fetch(`http://127.0.0.1:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+                const profileResponse = await fetch(`${API_BASE_URL}/api/user/profile?email=${encodeURIComponent(user.email)}`);
                 if (!profileResponse.ok) return;
                 const profileData = await profileResponse.json();
 
                 const userId = user.id || user.email;
-                const assessmentResponse = await fetch(`http://127.0.0.1:8000/api/assessment/results?userId=${encodeURIComponent(userId)}`);
+                const assessmentResponse = await fetch(`${API_BASE_URL}/api/assessment/results?userId=${encodeURIComponent(userId)}`);
                 const completedAssessments = assessmentResponse.ok ? await assessmentResponse.json() : [];
 
                 const fields = [
                     profileData.name && profileData.name !== 'User',
-                    profileData.major && profileData.major !== 'Not specified',
+                    profileData.major && profileData.major !== 'Not specified' && profileData.major.toLowerCase() !== 'general',
                     profileData.experience > 0,
                     profileData.location && profileData.location !== 'Not specified',
                     profileData.job_type && profileData.job_type !== 'Not specified',
@@ -120,7 +121,7 @@ export const Dashboard = () => {
         const fetchMarketData = async () => {
             try {
                 setMarketLoading(true);
-                const res = await fetch('http://127.0.0.1:8000/api/market/top-skills');
+                const res = await fetch(`${API_BASE_URL}/api/market/top-skills`);
                 if (!res.ok) throw new Error("API failed");
                 const data = await res.json();
                 setMarketData(data);

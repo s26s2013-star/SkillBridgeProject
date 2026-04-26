@@ -4,6 +4,7 @@ import { Input } from '../components/Input';
 import { Button } from '../components/Button';
 import { UploadCloud, CheckCircle2 } from 'lucide-react';
 import { authService } from '../services/authService';
+import { endpoints } from '../config/api';
 
 export const Register = () => {
     const navigate = useNavigate();
@@ -36,7 +37,7 @@ export const Register = () => {
 
         const fetchSpecializations = async () => {
             try {
-                const res = await fetch('http://127.0.0.1:8000/api/specializations');
+                const res = await fetch(endpoints.specializations);
                 if (res.ok) {
                     const data = await res.json();
                     setSpecializations(data);

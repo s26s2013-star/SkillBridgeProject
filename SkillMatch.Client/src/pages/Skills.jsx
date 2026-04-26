@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { authService } from '../services/authService';
+import { API_BASE_URL } from '../config/api';
 import { Wrench, BookOpen, Layers, Target, ChevronRight, AlertCircle, X } from 'lucide-react';
 import { Button } from '../components/Button';
 
@@ -27,7 +28,7 @@ export const Skills = () => {
         
         const fetchAllSkillsSingleRequest = async () => {
             try {
-                const res = await fetch(`http://127.0.0.1:8000/api/skills/for-user?email=${encodeURIComponent(userEmail)}`);
+                const res = await fetch(`${API_BASE_URL}/api/skills/for-user?email=${encodeURIComponent(userEmail)}`);
                 if (res.ok && isMounted) {
                     const result = await res.json();
                     setData(result);
@@ -337,7 +338,7 @@ export const Skills = () => {
                     </div>
                 ) : (
                     <>
-                        {!data.major || data.major === 'Not specified' ? (
+                        {!data.major || data.major === 'Not specified' || data.major.toLowerCase() === 'general' ? (
                             <div style={{ textAlign: 'center', padding: '3rem 2rem', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '12px', marginBottom: '2rem' }}>
                                 <AlertCircle size={48} color="var(--color-warning)" style={{ margin: '0 auto 1rem auto', opacity: 0.8 }} />
                                 <h3 style={{ fontSize: '1.4rem', marginBottom: '0.5rem', fontWeight: 600 }}>Specialization Required</h3>

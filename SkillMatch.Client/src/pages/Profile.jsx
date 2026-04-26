@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
+import { API_BASE_URL } from '../config/api';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
@@ -44,7 +45,7 @@ export const Profile = () => {
 
         const fetchProfile = async () => {
             try {
-                const response = await fetch(`http://127.0.0.1:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+                const response = await fetch(`${API_BASE_URL}/api/user/profile?email=${encodeURIComponent(user.email)}`);
                 if (response.ok) {
                     const data = await response.json();
                     setProfileData({
@@ -64,7 +65,7 @@ export const Profile = () => {
 
         const fetchSkillsFromDB = async () => {
             try {
-                const response = await fetch('http://127.0.0.1:8000/api/skills');
+                const response = await fetch(`${API_BASE_URL}/api/skills`);
                 if (response.ok) {
                     const data = await response.json();
                     const technical = data.filter(s => s.category?.toLowerCase() === 'technical');
@@ -90,7 +91,7 @@ export const Profile = () => {
         setError('');
 
         try {
-            const response = await fetch('http://127.0.0.1:8000/api/user/profile', {
+            const response = await fetch(`${API_BASE_URL}/api/user/profile`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -199,7 +200,7 @@ export const Profile = () => {
                             <div className="profile-detail-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '2rem' }}>
                                 <div>
                                     <h5 style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '0.5rem' }}>Major</h5>
-                                    <p style={{ fontWeight: '600', fontSize: '1.05rem' }}>{profileData.major || 'Not specified'}</p>
+                                    <p style={{ fontWeight: '600', fontSize: '1.05rem' }}>{(profileData.major && profileData.major.toLowerCase() !== 'general') ? profileData.major : 'Not specified'}</p>
                                 </div>
                                 <div>
                                     <h5 style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '0.5rem' }}>Experience</h5>

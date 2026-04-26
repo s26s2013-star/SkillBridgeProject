@@ -157,6 +157,9 @@ origins = [
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:5174",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
 ]
 
 app.add_middleware(
@@ -212,7 +215,7 @@ def get_specializations():
     for major in distinct_majors:
         if isinstance(major, str) and major.strip():
             trimmed = major.strip()
-            if trimmed not in clean_majors:
+            if trimmed not in clean_majors and trimmed.lower() != "general":
                 clean_majors.append(trimmed)
                 
     return sorted(clean_majors)

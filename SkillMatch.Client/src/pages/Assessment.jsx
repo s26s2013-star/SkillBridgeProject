@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/authService';
+import { API_BASE_URL } from '../config/api';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Button } from '../components/Button';
 import {
@@ -46,7 +47,6 @@ export const Assessment = () => {
     const [result, setResult] = useState(null);
     const [selectedFile, setSelectedFile] = useState(null);
     const [submissionMode, setSubmissionMode] = useState('text');
-    const [wantsToReassess, setWantsToReassess] = useState(false);
     const [caseStudyAnswers, setCaseStudyAnswers] = useState({
         problem_understanding: '',
         root_cause: '',
@@ -76,7 +76,6 @@ export const Assessment = () => {
     const [caseStudyText, setCaseStudyText] = useState("");
     const [caseStudyFile, setCaseStudyFile] = useState(null);
 
-    // === NEW SOFT SKILL MULTI-SCENARIO STATE ===
     const [softMultiAnswers, setSoftMultiAnswers] = useState(["", "", ""]);
     const [softRecordings, setSoftRecordings] = useState([
         { blob: null, url: null, isRecording: false, status: 'idle' },
@@ -84,6 +83,10 @@ export const Assessment = () => {
         { blob: null, url: null, isRecording: false, status: 'idle' }
     ]);
     const [mediaRecorders, setMediaRecorders] = useState([null, null, null]);
+    const [evalError, setEvalError] = useState(null);
+    const [scenarioModes, setScenarioModes] = useState(['text', 'text', 'text']);
+
+    const isSoft = skillDetails?.category === 'Soft';
 
     useEffect(() => {
         if (!user || !user.email) {
@@ -95,7 +98,7 @@ export const Assessment = () => {
             setLoading(true);
             try {
                 // Fetch current user's profile first to get specialization
-                const profileRes = await fetch(`http://127.0.0.1:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+                const profileRes = await fetch(`${API_BASE_URL}/api/user/profile?email=${encodeURIComponent(user.email)}`);
                 let userSkillNames = [];
                 let pulledMajor = null;
                 if (profileRes.ok) {
@@ -107,14 +110,14 @@ export const Assessment = () => {
                 }
 
                 // Fetch ALL skills (for skill detail lookups)
-                const skillsRes = await fetch('http://127.0.0.1:8000/api/skills');
+                const skillsRes = await fetch(`${API_BASE_URL}/api/skills`);
                 const allDbSkills = skillsRes.ok ? await skillsRes.json() : [];
 
                 // Fetch skills filtered server-side by specialization (more reliable)
                 let specializedSkills = [];
                 if (pulledMajor && pulledMajor !== 'Not specified') {
                     const specRes = await fetch(
-                        `http://127.0.0.1:8000/api/skills/by-specialization?major=${encodeURIComponent(pulledMajor)}`
+                        `${API_BASE_URL}/api/skills/by-specialization?major=${encodeURIComponent(pulledMajor)}`
                     );
                     specializedSkills = specRes.ok ? await specRes.json() : [];
                     
@@ -172,7 +175,12 @@ export const Assessment = () => {
                     });
 
                     if (category === 'Soft') {
-                        setEvaluationData(getShortEvaluationForSkill(activeSkillName, category));
+                        const evalInfo = getShortEvaluationForSkill(activeSkillName, category);
+                        setEvaluationData(evalInfo);
+                        if (evalInfo.scenarios) {
+                            setSoftMultiAnswers(new Array(evalInfo.scenarios.length).fill(""));
+                            setScenarioModes(new Array(evalInfo.scenarios.length).fill("text"));
+                        }
                         setSubmissionMode('text'); // Default to text for soft skills
                     } else {
                         setEvaluationData(getEvaluationForSkill(activeSkillName, category));
@@ -180,7 +188,7 @@ export const Assessment = () => {
                     }
 
                     setQuizLoading(true);
-                    fetch(`http://127.0.0.1:8000/api/assessment/quiz-questions?skill_name=${encodeURIComponent(activeSkillName)}&category=${encodeURIComponent(isSoftSkill ? 'Soft' : category)}`)
+                    fetch(`${API_BASE_URL}/api/assessment/quiz-questions?skill_name=${encodeURIComponent(activeSkillName)}&category=${encodeURIComponent(category === 'Soft' ? 'Soft' : category)}`)
                         .then(res => res.json())
                         .then(data => {
                             const qs = data.questions || [];
@@ -203,13 +211,13 @@ export const Assessment = () => {
     const saveSkillsToProfile = async (updatedSkillList) => {
         if (!user || !user.email) return;
         try {
-            const res = await fetch(`http://127.0.0.1:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+            const res = await fetch(`${API_BASE_URL}/api/user/profile?email=${encodeURIComponent(user.email)}`);
             if (!res.ok) throw new Error("Could not fetch profile");
             const profileData = await res.json();
 
             profileData.skills = updatedSkillNames;
 
-            await fetch('http://127.0.0.1:8000/api/user/profile', {
+            await fetch(`${API_BASE_URL}/api/user/profile`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(profileData)
@@ -296,12 +304,31 @@ export const Assessment = () => {
             description: s.description, components: s.components, category: s.category
         })));
 
-        setSkills(finalSkillsList);
-        setMajorResult(null);
-        setIsModalOpen(false);
-        setSubmission('');
-        setSelectedFile(null);
-        alert(`Successfully verified ${newTechnicalSkills.length} skills!`);
+        // Save assessment result record — always use canonical skill name as skillId
+        try {
+            await fetch(`${API_BASE_URL}/api/assessment/result`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: user?.id || user?.email || "unknown",
+                    skillId: canonicalName,
+                    skillName: canonicalName,
+                    category: category,
+                    answers: selectedOption.text,
+                    aiScore: selectedOption.points,
+                    level: selectedOption.level,
+                    status: "completed",
+                    completedAt: new Date().toISOString()
+                })
+            });
+        } catch (e) {
+            console.error("Failed to save assessment result:", e);
+        }
+
+        // Update UI state after saves complete
+        setSkills(newSkillsList);
+        setShortTestResult(skillToAdd);
+        setActiveShortTest(null);
     };
 
     // === INDIVIDUAL TECHNICAL ASSESSMENT FUNCTIONS (Stage 3) ===
@@ -310,7 +337,7 @@ export const Assessment = () => {
         setActiveTechSkill(skillName);
         try {
             const majorParam = userMajor ? `&major=${encodeURIComponent(userMajor)}` : '';
-            const res = await fetch(`http://127.0.0.1:8000/api/technical-questions?skill_name=${encodeURIComponent(skillName)}${majorParam}`);
+            const res = await fetch(`${API_BASE_URL}/api/technical-questions?skill_name=${encodeURIComponent(skillName)}${majorParam}`);
             const data = await res.json();
             if (data.questions && data.questions.length > 0) {
                 setTechQuestions(data.questions);
@@ -340,7 +367,7 @@ export const Assessment = () => {
                 }))
             };
 
-            const res = await fetch('http://127.0.0.1:8000/api/technical-assessment/score', {
+            const res = await fetch(`${API_BASE_URL}/api/technical-assessment/score`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -370,7 +397,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                 formData.append('file', caseStudyFile);
             }
 
-            const caseStudyRes = await fetch('http://127.0.0.1:8000/api/technical-assessment/case-study', {
+            const caseStudyRes = await fetch(`${API_BASE_URL}/api/technical-assessment/case-study`, {
                 method: 'POST',
                 body: formData
             });
@@ -415,21 +442,26 @@ ${caseStudyAnswers.testing_edge_cases}`;
                 description: s.description, components: s.components, category: s.category
             })));
 
-            await fetch('http://127.0.0.1:8000/api/assessment/result', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    userId: user?.email || "unknown",
-                    skillId: activeTechSkill,
-                    skillName: activeTechSkill,
-                    category: 'Technical',
-                    answers: `Final Score: ${finalResult.percentage}%`,
-                    aiScore: finalResult.percentage,
-                    level: finalLevel,
-                    status: "completed",
-                    completedAt: new Date().toISOString()
-                })
-            });
+            // Save result record
+            try {
+                await fetch(`${API_BASE_URL}/api/assessment/result`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        userId: user?.id || user?.email || "unknown",
+                        skillId: activeTechSkill,
+                        skillName: activeTechSkill,
+                        category: 'Technical',
+                        answers: `Final Score: ${round(finalPercentage, 2)}%`,
+                        aiScore: round(finalPercentage, 2),
+                        level: finalLevel,
+                        status: "completed",
+                        completedAt: new Date().toISOString()
+                    })
+                });
+            } catch (e) {
+                console.error("Failed to save result record:", e);
+            }
 
         } catch (error) {
             console.error("Error submitting technical assessment:", error);
@@ -549,7 +581,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
             }, ...newSkillsList];
 
             try {
-                await fetch('http://127.0.0.1:8000/api/assessment/result', {
+                await fetch(`${API_BASE_URL}/api/assessment/result`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -568,16 +600,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                 console.error(`Failed to save soft skill result for ${softSkillName}:`, e);
             }
         }
-<<<<<<< manar
-
-        await saveSkillsToProfile(newSkillsList.map(s => ({
-            name: s.name, level: s.level, progress: s.progress, status: s.status,
-            description: s.description, components: s.components, category: s.category
-        })));
-
-=======
         // Update UI
->>>>>>> main
         setSkills(newSkillsList);
         setSoftSkillAnswers({});
         setIsModalOpen(false);
@@ -628,55 +651,74 @@ ${caseStudyAnswers.testing_edge_cases}`;
     };
 
     const handleSubmitAssessment = async () => {
+        console.log("[Assessment] Submit button clicked");
         setIsSubmitting(true);
+        setEvalError(null);
         try {
             let data;
 
             if (skillDetails?.category === 'Soft') {
-                if (submissionMode === 'voice') {
-                    // Multi-Voice Submission
+                const hasVoice = scenarioModes.some(m => m === 'voice');
+                
+                if (hasVoice) {
+                    // Unified Voice/Mixed Submission
                     const formData = new FormData();
                     formData.append('email', user.email);
                     formData.append('skill_name', activeSkillName);
+                    formData.append('expected_keywords_json', JSON.stringify((evaluationData?.scenarios || []).map(s => s.keywords)));
 
-                    const keywords = skillDetails.scenarios.map(s => s.keywords);
-                    formData.append('expected_keywords_json', JSON.stringify(keywords));
-
-                    softRecordings.forEach((rec, i) => {
-                        if (rec.blob) {
-                            formData.append('files', rec.blob, `scenario_${i + 1}.webm`);
+                    // Build files list in order (Required for backend to match scenarios)
+                    for (let i = 0; i < scenarioModes.length; i++) {
+                        if (scenarioModes[i] === 'voice') {
+                            if (softRecordings[i].blob) {
+                                formData.append('files', softRecordings[i].blob, `scenario_${i + 1}.webm`);
+                            } else {
+                                // Fallback for edge cases
+                                formData.append('files', new Blob([""], { type: 'audio/webm' }), `scenario_${i + 1}_empty.webm`);
+                            }
+                        } else {
+                            // Send text as a plain text file (Gemini handles this)
+                            const textBlob = new Blob([softMultiAnswers[i] || ""], { type: 'text/plain' });
+                            formData.append('files', textBlob, `scenario_${i + 1}.txt`);
                         }
-                    });
+                    }
 
-                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/voice_evaluate_multi', {
+                    console.log("[Assessment] Sending unified mixed/voice payload", { email: user.email, skill: activeSkillName });
+                    const response = await fetch(`${API_BASE_URL}/api/user/assessment/voice_evaluate_multi`, {
                         method: 'POST',
                         body: formData
                     });
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                     data = await response.json();
                 } else {
-                    // Multi-Text Submission
-                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/text_evaluate_multi', {
+                    // All-Text Submission
+                    const payload = {
+                        email: user.email,
+                        skill_name: activeSkillName,
+                        answers: softMultiAnswers,
+                        expected_keywords: (evaluationData?.scenarios || []).map(s => s.keywords)
+                    };
+                    console.log("[Assessment] Sending all-text payload", payload);
+                    const response = await fetch(`${API_BASE_URL}/api/user/assessment/text_evaluate_multi`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            email: user.email,
-                            skill_name: activeSkillName,
-                            answers: softMultiAnswers,
-                            expected_keywords: skillDetails.scenarios.map(s => s.keywords)
-                        })
+                        body: JSON.stringify(payload)
                     });
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                     data = await response.json();
                 }
             } else if (submissionMode === 'quiz') {
->>>>>>> main
                 if (quizAnswers.some(a => a === null)) {
                     setIsSubmitting(false); return;
                 }
-                const response = await fetch('http://127.0.0.1:8000/api/user/assessment/quiz_evaluate', {
+                const payload = { email: user.email, skill_name: activeSkillName, answers: quizAnswers };
+                console.log("[Assessment] Sending quiz payload", payload);
+                const response = await fetch(`${API_BASE_URL}/api/user/assessment/quiz_evaluate`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: user.email, skill_name: activeSkillName, answers: quizAnswers })
+                    body: JSON.stringify(payload)
                 });
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 data = await response.json();
             } else if (submissionMode === 'upload') {
                 if (!selectedFile || !activeSkillName) {
@@ -687,13 +729,15 @@ ${caseStudyAnswers.testing_edge_cases}`;
                 formData.append('email', user?.email || 'unknown');
                 formData.append('skill_name', activeSkillName);
                 formData.append('file', selectedFile);
-                const response = await fetch('http://127.0.0.1:8000/api/user/assessment/upload_evaluate', {
+                console.log("[Assessment] Sending upload payload", { email: user.email, skill: activeSkillName, file: selectedFile.name });
+                const response = await fetch(`${API_BASE_URL}/api/user/assessment/upload_evaluate`, {
                     method: 'POST', body: formData
                 });
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 data = await response.json();
             } else {
                 if (isSoft) {
-                    const hasAnswers = Object.values(multiAnswers).some(ans => ans.trim());
+                    const hasAnswers = softMultiAnswers.some(ans => ans.trim());
                     if (!hasAnswers || !activeSkillName) {
                         setIsSubmitting(false);
                         return;
@@ -701,22 +745,24 @@ ${caseStudyAnswers.testing_edge_cases}`;
                     const formData = new FormData();
                     formData.append('email', user?.email || 'unknown');
                     formData.append('skill_name', activeSkillName);
-                    const allQs = evaluationData.allScenarios.map((s, i) => `[SCENARIO ${i + 1}] ${s.question}`).join('\n');
-                    const allAns = evaluationData.allScenarios.map((s, i) => `[ANSWER ${i + 1}] ${multiAnswers[i] || ''}`).join('\n\n');
-                    const allKeywords = evaluationData.allScenarios.flatMap(s => s.keywords || []).join(', ');
+                    const allQs = (evaluationData?.scenarios || []).map((s, i) => `[SCENARIO ${i + 1}] ${s.question}`).join('\n');
+                    const allAns = (evaluationData?.scenarios || []).map((s, i) => `[ANSWER ${i + 1}] ${softMultiAnswers[i] || ''}`).join('\n\n');
+                    const allKeywords = (evaluationData?.scenarios || []).flatMap(s => s.keywords || []).join(', ');
                     formData.append('question', allQs);
                     formData.append('expected_keywords', allKeywords);
                     formData.append('submission_text', allAns);
-                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/text_evaluate', {
+                    console.log("[Assessment] Sending text-evaluate payload", { email: user.email, skill: activeSkillName });
+                    const response = await fetch(`${API_BASE_URL}/api/user/assessment/text_evaluate`, {
                         method: 'POST', body: formData
                     });
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                     data = await response.json();
                 } else {
                     if (!submission.trim() || !activeSkillName) {
                         setIsSubmitting(false);
                         return;
                     }
-                    const response = await fetch('http://localhost:8000/api/user/assessment', {
+                    const response = await fetch(`${API_BASE_URL}/api/user/assessment`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -729,7 +775,8 @@ ${caseStudyAnswers.testing_edge_cases}`;
                     data = await response.json();
                 }
             }
-            await fetch('http://127.0.0.1:8000/api/assessment/result', {
+            console.log("[Assessment] API success response:", data);
+            await fetch(`${API_BASE_URL}/api/assessment/result`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -741,7 +788,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                             ? `File: ${selectedFile?.name}`
                             : submissionMode === 'voice'
                                 ? 'Voice Recording'
-                                : (skillDetails?.isSoft ? Object.values(multiAnswers).join(' | ') : submission)),
+                                : (isSoft ? softMultiAnswers.join(' | ') : submission)),
                     aiScore: data.score || 0,
                     status: 'completed',
                     completedAt: new Date().toISOString()
@@ -749,7 +796,8 @@ ${caseStudyAnswers.testing_edge_cases}`;
             });
             setResult(data);
         } catch (err) {
-            console.error('Submission failed', err);
+            console.error('[Assessment] API error:', err);
+            setEvalError(err.message || "Evaluation failed. Please try again.");
         } finally {
             setIsSubmitting(false);
         }
@@ -1110,7 +1158,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                                                 {activeTab === 'technical' && (
                                                     <div>
-                                                        {!userMajor ? (
+                                                        {(!userMajor || userMajor.toLowerCase() === 'general') ? (
                                                             <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
                                                                 <AlertCircle size={40} color="var(--color-warning)" style={{ margin: '0 auto 1rem auto' }} />
                                                                 <h4 style={{ marginBottom: '0.5rem', fontSize: '1.25rem' }}>Specialization Required</h4>
@@ -1192,7 +1240,6 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                         </div>
                                                     </div>
                                                 )}
->>>>>>> main
 
                                             {activeTab === 'soft' && (
                                                 <div>
@@ -1277,22 +1324,21 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                 style={{ fontSize: '0.8125rem' }}
                                                 onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}
                                             >
-                                                {skill.category === 'Soft' ? 'Reassess' : 'Complete Assessment'}
+                                                Start Assessment
                                             </Button>
                                         ) : (
                                             <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
                                                 <Button
                                                     variant="outline"
-                                                    style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem' }}
+                                                    style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem', background: 'rgba(111,179,167,0.1)', color: 'var(--color-primary)', border: 'none', cursor: 'default' }}
                                                     onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}
                                                 >
-                                                    Reassess
+                                                    View Result
                                                 </Button>
                                                 {skill.category !== 'Soft' && (
                                                     <Button
                                                         variant="outline"
                                                         style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem', opacity: 0.6, cursor: 'not-allowed' }}
-                                                        onClick={() => { }}
                                                         disabled
                                                     >
                                                         Show Matching
@@ -1319,7 +1365,6 @@ ${caseStudyAnswers.testing_edge_cases}`;
     // === INDIVIDUAL SKILL EVALUATION VIEW (Stage 3 Layout) ===
     return (
         <DashboardLayout user={user} onLogout={handleLogout}>
-<<<<<<< manar
             <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem' }}>
                 <button onClick={() => navigate('/assessment')} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '2rem', background: 'none', border: 'none', cursor: 'pointer', color: '#666' }}>
                     <ChevronLeft size={16} /> Back to Hub
@@ -1333,7 +1378,6 @@ ${caseStudyAnswers.testing_edge_cases}`;
                             <button onClick={() => setSubmissionMode('text')} style={{ padding: '1rem', borderBottom: submissionMode === 'text' ? '2px solid blue' : '0', cursor: 'pointer' }}>Scenario Answer</button>
                             <button onClick={() => setSubmissionMode('upload')} style={{ padding: '1rem', borderBottom: submissionMode === 'upload' ? '2px solid blue' : '0', cursor: 'pointer' }}>Upload Evidence</button>
                         </div>
-=======
             <div className="dashboard-section" style={{ maxWidth: '1000px', margin: '0 auto' }}>
                 <div style={{ marginBottom: '1.5rem' }}>
                     <button
@@ -1356,7 +1400,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                 {(() => {
                     const activeSkillData = skills.find(s => s.name.toLowerCase() === activeSkillName.toLowerCase());
                     const isCompleted = activeSkillData && activeSkillData.status !== 'Not tested';
-                    const showAssessmentForm = !isCompleted || wantsToReassess;
+                    const showAssessmentForm = !isCompleted;
 
                     if (!showAssessmentForm) {
                         return (
@@ -1369,13 +1413,15 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                     You have already completed the evaluation for {activeSkillName} with a score of {activeSkillData.progress}%.
                                 </p>
 
-                                <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', alignItems: 'flex-start' }}>
-                                    <Button variant="outline" onClick={() => setWantsToReassess(true)} style={{ padding: '0.75rem 2rem' }}>Reassess</Button>
+                                <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', alignItems: 'center' }}>
                                     {!skillDetails?.isSoft && activeSkillData.category !== 'Soft' && (
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
                                             <Button className="btn-primary" disabled style={{ padding: '0.75rem 2rem', opacity: 0.6, cursor: 'not-allowed' }}>Show Matching</Button>
                                             <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>Coming soon</span>
                                         </div>
+                                    )}
+                                    {isCompleted && (
+                                        <Button variant="outline" onClick={() => navigate('/assessment')} style={{ padding: '0.75rem 2rem' }}>Back to Hub</Button>
                                     )}
                                 </div>
                             </div>
@@ -1393,20 +1439,24 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                 boxShadow: 'var(--shadow-sm)'
                             }}>
                                 <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
-                                    <button
-                                        onClick={() => setSubmissionMode('text')}
-                                        style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'text' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'text' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
-                                    >
-                                        Write Answer
-                                    </button>
-                                    <button
-                                        onClick={() => setSubmissionMode('voice')}
-                                        style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'voice' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'voice' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
-                                    >
-                                        Voice Recording
-                                    </button>
-                                    {skillDetails.category !== 'Soft' && (
+                                    {skillDetails.category === 'Soft' ? (
+                                        <div style={{ padding: '0.5rem 0', color: 'var(--color-primary)', fontWeight: '700', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <Target size={18} /> Unified Multi-Scenario Mode
+                                        </div>
+                                    ) : (
                                         <>
+                                            <button
+                                                onClick={() => setSubmissionMode('text')}
+                                                style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'text' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'text' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                            >
+                                                Write Answer
+                                            </button>
+                                            <button
+                                                onClick={() => setSubmissionMode('voice')}
+                                                style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'voice' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'voice' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                            >
+                                                Voice Recording
+                                            </button>
                                             <button
                                                 onClick={() => setSubmissionMode('quiz')}
                                                 style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'quiz' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'quiz' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
@@ -1432,7 +1482,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                         {submissionMode === 'voice' ? <Plus size={24} /> : (submissionMode === 'text' ? <FileText size={24} /> : <CheckCircle2 size={24} />)}
                                     </div>
                                     <h3 style={{ margin: 0 }}>
-                                        {submissionMode === 'voice' ? 'Split Voice Assessment' : (submissionMode === 'text' ? 'Multi-Scenario Assessment' : 'AI Evaluation')}
+                                        {skillDetails.category === 'Soft' ? 'Soft Skill Scenario Evaluation' : (submissionMode === 'voice' ? 'Split Voice Assessment' : (submissionMode === 'text' ? 'Multi-Scenario Assessment' : 'AI Evaluation'))}
                                     </h3>
                                 </div>
 
@@ -1440,12 +1490,46 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
                                         {evaluationData.scenarios.map((scenario, idx) => (
                                             <div key={idx} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                                                     <h4 style={{ margin: 0, fontSize: '1rem', color: 'var(--color-primary)' }}>Scenario {idx + 1}</h4>
+                                                    
+                                                    {/* Unified Toggle */}
+                                                    <div style={{ display: 'flex', background: 'var(--color-bg-paper)', padding: '2px', borderRadius: '8px', border: '1px solid var(--color-border)' }}>
+                                                        <button 
+                                                            onClick={() => {
+                                                                const next = [...scenarioModes];
+                                                                next[idx] = 'text';
+                                                                setScenarioModes(next);
+                                                            }}
+                                                            style={{ 
+                                                                padding: '4px 12px', fontSize: '0.8rem', borderRadius: '6px', border: 'none', cursor: 'pointer',
+                                                                background: scenarioModes[idx] === 'text' ? 'var(--color-primary)' : 'transparent',
+                                                                color: scenarioModes[idx] === 'text' ? 'white' : 'var(--color-text-muted)',
+                                                                fontWeight: 600, transition: 'all 0.2s'
+                                                            }}
+                                                        >
+                                                            Write
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => {
+                                                                const next = [...scenarioModes];
+                                                                next[idx] = 'voice';
+                                                                setScenarioModes(next);
+                                                            }}
+                                                            style={{ 
+                                                                padding: '4px 12px', fontSize: '0.8rem', borderRadius: '6px', border: 'none', cursor: 'pointer',
+                                                                background: scenarioModes[idx] === 'voice' ? 'var(--color-primary)' : 'transparent',
+                                                                color: scenarioModes[idx] === 'voice' ? 'white' : 'var(--color-text-muted)',
+                                                                fontWeight: 600, transition: 'all 0.2s'
+                                                            }}
+                                                        >
+                                                            Voice
+                                                        </button>
+                                                    </div>
                                                 </div>
                                                 <p style={{ margin: '0 0 1.25rem 0', fontWeight: 600, fontSize: '1.05rem', lineHeight: 1.5 }}>{scenario.question}</p>
 
-                                                {submissionMode === 'text' ? (
+                                                {scenarioModes[idx] === 'text' ? (
                                                     <textarea
                                                         className="form-control"
                                                         placeholder="Describe your reasoning and exact response..."
@@ -1506,9 +1590,9 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                         <div style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>{evaluationData.researchImportance}</div>
                                                     </div>
                                                 )}
-                                                {skillDetails?.isSoft && evaluationData?.allScenarios ? (
+                                                {isSoft && evaluationData?.scenarios ? (
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                                        {evaluationData.allScenarios.map((scenario, idx) => (
+                                                        {evaluationData.scenarios.map((scenario, idx) => (
                                                             <div key={idx} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
                                                                 <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>Scenario {idx + 1}</div>
                                                                 <p style={{ margin: 0, lineHeight: 1.6, fontWeight: 500, fontSize: '1.05rem', color: 'var(--color-text)' }}>{scenario.question}</p>
@@ -1565,9 +1649,9 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                 )}
                                             </div>
                                         ) : submissionMode === 'text' ? (
-                                            skillDetails?.isSoft && evaluationData?.allScenarios ? (
+                                            isSoft && evaluationData?.scenarios ? (
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                                    {evaluationData.allScenarios.map((_, idx) => (
+                                                    {evaluationData.scenarios.map((_, idx) => (
                                                         <div key={idx} style={{ position: 'relative' }}>
                                                             <textarea
                                                                 className="form-control"
@@ -1577,14 +1661,18 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                                     fontSize: '1rem', lineHeight: 1.6, borderRadius: 'var(--radius-md)',
                                                                     border: '1px solid var(--color-border)', resize: 'vertical'
                                                                 }}
-                                                                value={multiAnswers[idx] || ''}
-                                                                onChange={(e) => setMultiAnswers(prev => ({ ...prev, [idx]: e.target.value }))}
+                                                                value={softMultiAnswers[idx] || ''}
+                                                                onChange={(e) => {
+                                                                    const next = [...softMultiAnswers];
+                                                                    next[idx] = e.target.value;
+                                                                    setSoftMultiAnswers(next);
+                                                                }}
                                                             />
                                                             <div style={{
                                                                 position: 'absolute', bottom: '1rem', right: '1.5rem',
                                                                 color: 'var(--color-text-muted)', fontSize: '0.85rem'
                                                             }}>
-                                                                {(multiAnswers[idx] || '').length} characters
+                                                                {(softMultiAnswers[idx] || '').length} characters
                                                             </div>
                                                         </div>
                                                     ))}
@@ -1612,8 +1700,8 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                             )
                                         ) : submissionMode === 'voice' ? (
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                                {skillDetails?.isSoft && evaluationData?.allScenarios ? (
-                                                    evaluationData.allScenarios.map((_, idx) => (
+                                                {isSoft && evaluationData?.scenarios ? (
+                                                    evaluationData.scenarios.map((_, idx) => (
                                                         <div key={idx} style={{ padding: '1.5rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
                                                             <div style={{ fontWeight: 600, marginBottom: '1rem' }}>Record Scenario {idx + 1}</div>
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -1719,20 +1807,30 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                         </div>
                                     ) : <div />}
 
-                                    <Button
-                                        className="btn-primary"
-                                        style={{ padding: '0.75rem 2.5rem' }}
-                                        onClick={handleSubmitAssessment}
-                                        disabled={
-                                            (submissionMode === 'quiz' && (quizLoading || quizAnswers.some(a => a === null))) ||
-                                            (submissionMode === 'text' && (skillDetails.category === 'Soft' ? softMultiAnswers.some(a => !a.trim()) : !submission.trim())) ||
-                                            (submissionMode === 'voice' && softRecordings.some(r => !r.blob)) ||
-                                            (submissionMode === 'upload' && !selectedFile) ||
-                                            isSubmitting
-                                        }
-                                    >
-                                        {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> Processing...</> : 'Submit Assessment'}
-                                    </Button>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
+                                        <Button
+                                            className="btn-primary"
+                                            style={{ padding: '0.75rem 2.5rem' }}
+                                            onClick={handleSubmitAssessment}
+                                            disabled={
+                                                (submissionMode === 'quiz' && (quizLoading || quizAnswers.some(a => a === null))) ||
+                                                (isSoft ? 
+                                                    scenarioModes.some((mode, idx) => mode === 'text' ? !softMultiAnswers[idx].trim() : !softRecordings[idx].blob) :
+                                                    (submissionMode === 'text' ? !submission.trim() : 
+                                                     submissionMode === 'voice' ? !audioBlob :
+                                                     submissionMode === 'upload' ? !selectedFile : false)
+                                                ) ||
+                                                isSubmitting
+                                            }
+                                        >
+                                            {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> Processing...</> : 'Submit Assessment'}
+                                        </Button>
+                                        {evalError && (
+                                            <div style={{ color: '#EF4444', fontSize: '0.875rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                                <AlertCircle size={14} /> {evalError}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 

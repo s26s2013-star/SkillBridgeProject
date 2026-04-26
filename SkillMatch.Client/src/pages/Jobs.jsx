@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
+import { API_BASE_URL } from '../config/api';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Briefcase, MapPin, Building2, AlertCircle } from 'lucide-react';
 
@@ -85,7 +86,7 @@ export const Jobs = () => {
         const fetchProfile = async () => {
             try {
                 // Fetch current user's profile to get specialization accurately
-                const profileRes = await fetch(`http://127.0.0.1:8000/api/user/profile?email=${encodeURIComponent(initialUser.email)}`);
+                const profileRes = await fetch(`${API_BASE_URL}/api/user/profile?email=${encodeURIComponent(initialUser.email)}`);
                 if (profileRes.ok) {
                     const profileData = await profileRes.json();
                     setUserMajor(profileData.major ? profileData.major.trim() : null);
