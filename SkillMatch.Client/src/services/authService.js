@@ -37,13 +37,13 @@ export const authService = {
         return data;
     },
 
-    async register(name, email, password, role, major) {
+    async register(name, email, password, role, major, skills = []) {
         const response = await fetch(endpoints.auth.register, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ name, email, password, role, major })
+                body: JSON.stringify({ name, email, password, role, major, skills })
             });
 
             // Assuming sometimes register might just return 200 OK without a JSON body

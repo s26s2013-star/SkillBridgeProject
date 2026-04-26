@@ -4,7 +4,7 @@ import { authService } from '../services/authService';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
-import { CheckCircle2, X } from 'lucide-react';
+import { CheckCircle2, X, UploadCloud } from 'lucide-react';
 
 const OMAN_STATES = [
     "Muscat", "Dhofar", "Musandam", "Al Buraimi", "Ad Dakhiliyah", 
@@ -22,6 +22,7 @@ export const Profile = () => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
+    const [isExtracting, setIsExtracting] = useState(false);
 
     const [profileData, setProfileData] = useState({
         name: user?.name || '',
@@ -76,7 +77,7 @@ export const Profile = () => {
         };
 
         Promise.all([fetchProfile(), fetchSkillsFromDB()]).finally(() => setLoading(false));
-    }, [navigate]);
+    }, [navigate, user]);
 
     const handleLogout = () => {
         authService.logout();
@@ -118,6 +119,42 @@ export const Profile = () => {
                 return { ...prev, skills: [...prev.skills, { name: skillName, level: 'Beginner', progress: 30, status: 'Not tested' }] };
             }
         });
+    };
+
+    const handleCVUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setIsExtracting(true);
+        setError('');
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch('http://127.0.0.1:8000/api/user/extract-skills', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) throw new Error("Failed to extract skills from CV");
+
+            const data = await response.json();
+            if (data.skills && data.skills.length > 0) {
+                setProfileData(prev => {
+                    const currentSkillNames = new Set(prev.skills.map(s => typeof s === 'string' ? s : s.name));
+                    const newSkills = data.skills.filter(s => !currentSkillNames.has(s.name));
+                    return { ...prev, skills: [...prev.skills, ...newSkills] };
+                });
+            } else {
+                setError("No skills matched from your CV. Try adding them manually.");
+            }
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setIsExtracting(false);
+            e.target.value = null; // Reset file input
+        }
     };
 
     if (loading) {
@@ -285,7 +322,40 @@ export const Profile = () => {
                             </div>
 
                             <div style={{ marginTop: '2.5rem', borderTop: '1px solid var(--color-border)', paddingTop: '2.5rem' }}>
-                                <h4 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', fontWeight: 'bold' }}>Select Your Skills</h4>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                                    <h4 style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>Select Your Skills</h4>
+                                    
+                                    <div style={{ position: 'relative' }}>
+                                        <input 
+                                            type="file" 
+                                            id="cv-upload" 
+                                            accept=".pdf,.docx,.txt" 
+                                            style={{ display: 'none' }} 
+                                            onChange={handleCVUpload}
+                                            disabled={isExtracting}
+                                        />
+                                        <label 
+                                            htmlFor="cv-upload" 
+                                            style={{ 
+                                                display: 'flex', 
+                                                alignItems: 'center', 
+                                                gap: '0.5rem', 
+                                                padding: '0.5rem 1rem', 
+                                                background: 'var(--color-primary-light)', 
+                                                color: 'var(--color-primary)', 
+                                                borderRadius: 'var(--radius-md)', 
+                                                cursor: isExtracting ? 'not-allowed' : 'pointer',
+                                                fontWeight: '600',
+                                                fontSize: '0.875rem',
+                                                transition: 'all 0.2s',
+                                                opacity: isExtracting ? 0.7 : 1
+                                            }}
+                                        >
+                                            <UploadCloud size={18} />
+                                            {isExtracting ? 'Scanning CV...' : 'Scan CV for Skills'}
+                                        </label>
+                                    </div>
+                                </div>
                                 
                                 <div style={{ marginBottom: '2.5rem' }}>
                                     <h5 style={{ fontSize: '1rem', color: 'var(--color-primary)', marginBottom: '1rem', fontWeight: '600' }}>Technical Skills</h5>

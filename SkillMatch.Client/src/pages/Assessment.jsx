@@ -25,15 +25,18 @@ export const Assessment = () => {
     const [dbSkillsList, setDbSkillsList] = useState([]);
     const [checkedSkills, setCheckedSkills] = useState([]);
     const [userMajor, setUserMajor] = useState(user.major || null);
-    const [newLevel, setNewLevel] = useState('Beginner');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('technical');
-    const [activeShortTest, setActiveShortTest] = useState(null);
-    const [shortTestSelection, setShortTestSelection] = useState(null);
     const [softSkillAnswers, setSoftSkillAnswers] = useState({}); // { skillName: optionIndex }
     const [shortTestResult, setShortTestResult] = useState(null);
 
-    // === EVALUATION STATE ===
+    // === MAJOR ASSESSMENT STATE (Stage 2) ===
+    const [majorAssessmentTask, setMajorAssessmentTask] = useState(null);
+    const [majorResult, setMajorResult] = useState(null);
+    const [majorSubmitting, setMajorSubmitting] = useState(false);
+    const [majorLoading, setMajorLoading] = useState(false);
+
+    // === INDIVIDUAL EVALUATION STATE (Stage 3 & 2 shared) ===
     const [skillDetails, setSkillDetails] = useState(null);
     const [evaluationData, setEvaluationData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -47,7 +50,7 @@ export const Assessment = () => {
     const [quizAnswers, setQuizAnswers] = useState(new Array(10).fill(null));
     const [quizLoading, setQuizLoading] = useState(false);
 
-    // === NEW TECHNICAL ASSESSMENT STATE ===
+    // === NEW TECHNICAL ASSESSMENT FLOW STATE (Stage 3) ===
     const [techFlowActive, setTechFlowActive] = useState(false);
     const [techQuestions, setTechQuestions] = useState([]);
     const [currentTechIdx, setCurrentTechIdx] = useState(0);
@@ -99,17 +102,21 @@ export const Assessment = () => {
                         `http://127.0.0.1:8000/api/skills/by-specialization?major=${encodeURIComponent(pulledMajor)}`
                     );
                     specializedSkills = specRes.ok ? await specRes.json() : [];
-                    console.log(`[Assessment] Skills for "${pulledMajor}":`, specializedSkills.length, specializedSkills.map(s => s.skill_name));
+                    
+                    // Fetch Major Assessment details (Stage 2)
+                    setMajorLoading(true);
+                    const majorTaskRes = await fetch(`http://127.0.0.1:8000/api/major-assessment?major=${encodeURIComponent(pulledMajor)}`);
+                    if (majorTaskRes.ok) {
+                        setMajorAssessmentTask(await majorTaskRes.json());
+                    }
+                    setMajorLoading(false);
                 }
 
-                // Merge: use specializedSkills for the modal if major is set
-                // Store in state
+                // Set specialized list for hub
                 if (pulledMajor && pulledMajor !== 'Not specified') {
                     setDbSkillsList(specializedSkills);
-                    console.log(`[Assessment] Loaded ${specializedSkills.length} skills for major: ${pulledMajor}`);
                 } else {
                     setDbSkillsList(allDbSkills);
-                    console.log("[Assessment] No major detected, falling back to all skills");
                 }
 
                 const formattedUserSkills = userSkillNames.map((skillObj, index) => {
@@ -157,6 +164,7 @@ export const Assessment = () => {
                         setSubmissionMode('quiz'); // Default to quiz for technical skills
                     }
                     
+                    // Fetch Quiz context (Stage 3)
                     setQuizLoading(true);
                     fetch(`http://127.0.0.1:8000/api/assessment/quiz-questions?skill_name=${encodeURIComponent(activeSkillName)}&category=${encodeURIComponent(match ? match.category : 'Technical')}`)
                         .then(res => res.json())
@@ -170,22 +178,22 @@ export const Assessment = () => {
                 }
 
             } catch (error) {
-                console.error("Failed to load skills:", error);
+                console.error("Failed to load assessment data:", error);
             } finally {
                 setLoading(false);
             }
         };
         loadData();
-    }, [user?.email, activeSkillName]);
+    }, [user?.email, activeSkillName, navigate]);
 
-    const saveSkillsToProfile = async (updatedSkillNames) => {
+    const saveSkillsToProfile = async (updatedSkillList) => {
         if (!user || !user.email) return;
         try {
-            const res = await fetch(`http://localhost:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+            const res = await fetch(`http://127.0.0.1:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
             if (!res.ok) throw new Error("Could not fetch profile");
             const profileData = await res.json();
             
-            profileData.skills = updatedSkillNames;
+            profileData.skills = updatedSkillList;
             
             await fetch('http://127.0.0.1:8000/api/user/profile', {
                 method: 'PUT',
@@ -202,87 +210,76 @@ export const Assessment = () => {
         navigate('/login');
     };
 
-    // --- HUB FUNCTIONS ---
+    // === MAJOR ASSESSMENT FUNCTIONS (Stage 2) ===
+    const handleMajorSubmit = async () => {
+        if (!userMajor) return;
+        setMajorSubmitting(true);
+        try {
+            const formData = new FormData();
+            formData.append('email', user.email);
+            formData.append('major', userMajor);
+            formData.append('mode', submissionMode);
+            
+            if (submissionMode === 'file') {
+                if (!selectedFile) return;
+                formData.append('file', selectedFile);
+            } else {
+                if (!submission.trim()) return;
+                formData.append('submission_text', submission);
+            }
 
-    const startShortTest = (skillName, category) => {
-        const questionObj = getShortEvaluationForSkill(skillName, category);
-        setActiveShortTest({ name: skillName, category, questionObj });
-        setShortTestSelection(null);
+            const response = await fetch('http://127.0.0.1:8000/api/major-assessment', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setMajorResult(data);
+            } else {
+                throw new Error("Assessment submission failed");
+            }
+        } catch (err) {
+            console.error("Major assessment failed:", err);
+            alert("Failed to process assessment. Please try again.");
+        } finally {
+            setMajorSubmitting(false);
+        }
     };
 
-    const submitShortTest = async () => {
-        if (shortTestSelection === null || !activeShortTest) return;
-
-        const { name, category } = activeShortTest;
-        const selectedOption = activeShortTest.questionObj.options[shortTestSelection];
-
-        let newSkillsList = [...skills];
+    const acceptMajorAssessment = async () => {
+        if (!majorResult) return;
         
-        let dbMatch = null;
-        if (category !== 'Soft') {
-            dbMatch = dbSkillsList.find(s => s.skill_name.toLowerCase() === name.toLowerCase());
-        }
+        const newTechnicalSkills = majorResult.skill_breakdown.map(skill => {
+            const dbMatch = dbSkillsList.find(s => s.skill_name.toLowerCase() === skill.name.toLowerCase());
+            return {
+                name: skill.name,
+                progress: skill.score,
+                status: skill.status,
+                level: skill.level,
+                category: 'Technical',
+                description: `Verified proficiency via ${userMajor} unified assessment.`,
+                components: dbMatch ? dbMatch.key_components : []
+            };
+        });
 
-        // Canonical name — always the human-readable skill name, used as the key everywhere
-        const canonicalName = dbMatch ? dbMatch.skill_name : name;
+        const softSkills = skills.filter(s => s.category === 'Soft');
+        const finalSkillsList = [...newTechnicalSkills, ...softSkills];
 
-        let desc = category === 'Soft' 
-            ? `Soft skill evaluated via AI case-study.` 
-            : 'Technical skill assessed via AI placement test.';
-            
-        if (dbMatch) {
-            if (selectedOption.level === 'Advanced') desc = dbMatch.advanced_criteria;
-            else if (selectedOption.level === 'Intermediate') desc = dbMatch.intermediate_criteria;
-            else desc = dbMatch.beginner_criteria;
-        }
-
-        const skillToAdd = {
-            name: canonicalName,
-            progress: selectedOption.points,
-            status: 'Not tested',
-            level: selectedOption.level,
-            category: dbMatch ? dbMatch.category : category,
-            description: desc,
-            components: dbMatch && dbMatch.key_components ? dbMatch.key_components : []
-        };
-        
-        newSkillsList = newSkillsList.filter(s => s.name.toLowerCase() !== name.toLowerCase());
-        newSkillsList = [skillToAdd, ...newSkillsList];
-
-        // Save profile first
-        await saveSkillsToProfile(newSkillsList.map(s => ({
+        await saveSkillsToProfile(finalSkillsList.map(s => ({
             name: s.name, level: s.level, progress: s.progress, status: s.status,
             description: s.description, components: s.components, category: s.category
         })));
 
-        // Save assessment result record — always use canonical skill name as skillId
-        try {
-            await fetch('http://127.0.0.1:8000/api/assessment/result', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    userId: user?.id || user?.email || "unknown",
-                    skillId: canonicalName,
-                    skillName: canonicalName,
-                    category: category,
-                    answers: selectedOption.text,
-                    aiScore: selectedOption.points,
-                    level: selectedOption.level,
-                    status: "completed",
-                    completedAt: new Date().toISOString()
-                })
-            });
-        } catch (e) {
-            console.error("Failed to save assessment result:", e);
-        }
-
-        // Update UI state after saves complete
-        setSkills(newSkillsList);
-        setShortTestResult(skillToAdd);
-        setActiveShortTest(null);
+        setSkills(finalSkillsList);
+        setMajorResult(null);
+        setIsModalOpen(false);
+        setSubmission('');
+        setSelectedFile(null);
+        alert(`Successfully verified ${newTechnicalSkills.length} skills!`);
     };
 
-    // --- NEW TECHNICAL ASSESSMENT FUNCTIONS ---
+    // === INDIVIDUAL TECHNICAL ASSESSMENT FUNCTIONS (Stage 3) ===
     const startTechnicalAssessment = async (skillName) => {
         setTechLoading(true);
         setActiveTechSkill(skillName);
@@ -325,13 +322,10 @@ export const Assessment = () => {
             });
             const rubricData = await res.json();
             
-            // 2. Submit Case Study
             const formData = new FormData();
             formData.append('skill_name', activeTechSkill);
             formData.append('case_study_text', caseStudyText);
-            if (caseStudyFile) {
-                formData.append('file', caseStudyFile);
-            }
+            if (caseStudyFile) formData.append('file', caseStudyFile);
 
             const caseStudyRes = await fetch('http://127.0.0.1:8000/api/technical-assessment/case-study', {
                 method: 'POST',
@@ -339,37 +333,29 @@ export const Assessment = () => {
             });
             const caseStudyData = await caseStudyRes.json();
 
-            // 3. Calculate Final Score: (Rubric % + Case Study %) / 2
             const rubricPercentage = rubricData.percentage || 0;
             const caseStudyPercentage = caseStudyData.case_study_percentage || 0;
             const finalPercentage = (rubricPercentage + caseStudyPercentage) / 2;
 
-            // Determine final level based on the final percentage
             let finalLevel = "Beginner";
             if (finalPercentage >= 85) finalLevel = "Advanced";
             else if (finalPercentage >= 60) finalLevel = "Intermediate";
 
             const finalResult = {
                 ...rubricData,
-                rubric_percentage: rubricPercentage || 0,
-                case_study_percentage: caseStudyPercentage || 0,
-                percentage: round(finalPercentage, 2) || 0,
-                level: finalLevel || "Beginner",
-                feedback: caseStudyData.feedback || "No feedback provided.",
-                problem_identification: caseStudyData.problem_identification || 0,
-                solution_appropriateness: caseStudyData.solution_appropriateness || 0,
-                technical_depth: caseStudyData.technical_depth || 0,
-                practical_application: caseStudyData.practical_application || 0,
-                clarity_and_evidence: caseStudyData.clarity_and_evidence || 0
+                rubric_percentage: rubricPercentage,
+                case_study_percentage: caseStudyPercentage,
+                percentage: Math.round(finalPercentage * 100) / 100,
+                level: finalLevel,
+                feedback: caseStudyData.feedback || "Evaluation complete."
             };
 
             setTechResult(finalResult);
 
-            // 4. Save to Profile
             let newSkillsList = [...skills];
             const skillToAdd = {
                 name: activeTechSkill,
-                progress: round(finalPercentage, 2),
+                progress: finalResult.percentage,
                 status: finalPercentage >= 60 ? 'Verified' : 'Pending',
                 level: finalLevel,
                 category: 'Technical',
@@ -386,26 +372,21 @@ export const Assessment = () => {
                 description: s.description, components: s.components, category: s.category
             })));
 
-            // Save result record
-            try {
-                await fetch('http://127.0.0.1:8000/api/assessment/result', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        userId: user?.id || user?.email || "unknown",
-                        skillId: activeTechSkill,
-                        skillName: activeTechSkill,
-                        category: 'Technical',
-                        answers: `Final Score: ${round(finalPercentage, 2)}%`,
-                        aiScore: round(finalPercentage, 2),
-                        level: finalLevel,
-                        status: "completed",
-                        completedAt: new Date().toISOString()
-                    })
-                });
-            } catch (e) {
-                console.error("Failed to save result record:", e);
-            }
+            await fetch('http://127.0.0.1:8000/api/assessment/result', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: user?.email || "unknown",
+                    skillId: activeTechSkill,
+                    skillName: activeTechSkill,
+                    category: 'Technical',
+                    answers: `Final Score: ${finalResult.percentage}%`,
+                    aiScore: finalResult.percentage,
+                    level: finalLevel,
+                    status: "completed",
+                    completedAt: new Date().toISOString()
+                })
+            });
 
         } catch (error) {
             console.error("Error submitting technical assessment:", error);
@@ -414,6 +395,9 @@ export const Assessment = () => {
         }
     };
 
+<<<<<<< manar
+    // === SOFT SKILL FUNCTIONS ===
+=======
     const round = (num, decimals) => {
         return Math.round((num + Number.EPSILON) * Math.pow(10, decimals)) / Math.pow(10, decimals);
     };
@@ -502,6 +486,7 @@ export const Assessment = () => {
         });
     };
 
+>>>>>>> main
     const submitAllSoftSkills = async () => {
         if (!allSoftAnswered) return;
 
@@ -523,24 +508,13 @@ export const Assessment = () => {
                 description: `Soft skill evaluated via AI case-study.`,
                 components: []
             }, ...newSkillsList];
-        }
 
-        // Save all to profile at once
-        await saveSkillsToProfile(newSkillsList.map(s => ({
-            name: s.name, level: s.level, progress: s.progress, status: s.status,
-            description: s.description, components: s.components, category: s.category
-        })));
-
-        // Save each assessment result record to MongoDB
-        for (const softSkillName of unevaluatedSoftSkills) {
-            const questionObj = getShortEvaluationForSkill(softSkillName, 'Soft');
-            const selectedOption = questionObj.options[softSkillAnswers[softSkillName]];
             try {
                 await fetch('http://127.0.0.1:8000/api/assessment/result', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        userId: user?.id || user?.email || "unknown",
+                        userId: user?.email || "unknown",
                         skillId: softSkillName,
                         skillName: softSkillName,
                         category: 'Soft',
@@ -555,16 +529,29 @@ export const Assessment = () => {
                 console.error(`Failed to save soft skill result for ${softSkillName}:`, e);
             }
         }
+<<<<<<< manar
+
+        await saveSkillsToProfile(newSkillsList.map(s => ({
+            name: s.name, level: s.level, progress: s.progress, status: s.status,
+            description: s.description, components: s.components, category: s.category
+        })));
+
+=======
         // Update UI
+>>>>>>> main
         setSkills(newSkillsList);
         setSoftSkillAnswers({});
         setIsModalOpen(false);
     };
 
+    // === INDIVIDUAL PAGE EVALUATION SUBMIT (Stage 3 & 2) ===
     const handleSubmitAssessment = async () => {
         setIsSubmitting(true);
         try {
             let data;
+<<<<<<< manar
+            if (submissionMode === 'quiz') {
+=======
             
             if (skillDetails?.category === 'Soft') {
                 if (submissionMode === 'voice') {
@@ -602,9 +589,9 @@ export const Assessment = () => {
                     data = await response.json();
                 }
             } else if (submissionMode === 'quiz') {
+>>>>>>> main
                 if (quizAnswers.some(a => a === null)) {
-                    setIsSubmitting(false);
-                    return;
+                    setIsSubmitting(false); return;
                 }
                 const response = await fetch('http://127.0.0.1:8000/api/user/assessment/quiz_evaluate', {
                     method: 'POST',
@@ -616,31 +603,17 @@ export const Assessment = () => {
                     })
                 });
                 data = await response.json();
-                
             } else if (submissionMode === 'upload') {
-                if (!selectedFile || !activeSkillName) {
-                    setIsSubmitting(false);
-                    return;
-                }
-                
                 const formData = new FormData();
                 formData.append('email', user?.email || "unknown");
                 formData.append('skill_name', activeSkillName);
-                formData.append('file', selectedFile);
-
+                if (selectedFile) formData.append('file', selectedFile);
                 const response = await fetch('http://127.0.0.1:8000/api/user/assessment/upload_evaluate', {
-                    method: 'POST',
-                    body: formData
+                    method: 'POST', body: formData
                 });
                 data = await response.json();
-                
             } else {
-                if (!submission.trim() || !activeSkillName) {
-                    setIsSubmitting(false);
-                    return;
-                }
-                
-                const response = await fetch('http://localhost:8000/api/user/assessment', {
+                const response = await fetch('http://127.0.0.1:8000/api/user/assessment', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -652,12 +625,12 @@ export const Assessment = () => {
                 });
                 data = await response.json();
             }
-            
+
             await fetch('http://127.0.0.1:8000/api/assessment/result', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    userId: user?.id || user?.email || "unknown",
+                    userId: user?.email || "unknown",
                     skillId: activeSkillName,
                     answers: submissionMode === 'quiz' ? `AI Quiz Score: ${data.score}` : (submissionMode === 'upload' ? `File: ${selectedFile?.name}` : submission),
                     aiScore: data.score || 0,
@@ -678,6 +651,19 @@ export const Assessment = () => {
         setResult(null);
         setSubmission('');
         setSelectedFile(null);
+<<<<<<< manar
+        setWantsToReassess(false);
+        navigate('/assessment');
+    };
+
+    const handleRemoveSkill = async (name) => {
+        const newSkillsList = skills.filter(s => s.name !== name);
+        setSkills(newSkillsList);
+        await saveSkillsToProfile(newSkillsList.map(s => ({
+            name: s.name, level: s.level, progress: s.progress, status: s.status,
+            description: s.description, components: s.components, category: s.category
+        })));
+=======
         setSoftMultiAnswers(["", "", ""]);
         setSoftRecordings([
             { blob: null, url: null, isRecording: false, status: 'idle' },
@@ -685,7 +671,15 @@ export const Assessment = () => {
             { blob: null, url: null, isRecording: false, status: 'idle' }
         ]);
         navigate('/assessment'); // Removes query param, returns to hub
+>>>>>>> main
     };
+
+    const SOFT_SKILLS_LIST = ["Communication", "Teamwork", "Problem Solving", "Adaptability"];
+    const unevaluatedSoftSkills = SOFT_SKILLS_LIST.filter(
+        ss => !skills.some(s => s.name.toLowerCase() === ss.toLowerCase())
+    );
+    const allSoftAnswered = unevaluatedSoftSkills.length > 0 &&
+        unevaluatedSoftSkills.every(ss => softSkillAnswers[ss] !== undefined);
 
     if (loading) {
         return (
@@ -697,291 +691,145 @@ export const Assessment = () => {
         );
     }
 
-    // ============================================
-    // RENDER: HUB VIEW
-    // ============================================
+    // === RENDER LOGIC ===
     if (!activeSkillName) {
         return (
             <DashboardLayout user={user} onLogout={handleLogout}>
                 <div className="skills-page-container">
                     <div className="section-header" style={{ marginBottom: '2rem', display: 'block' }}>
                         <h2 style={{ fontSize: '2rem', fontWeight: '800', color: 'var(--color-primary)', marginBottom: '0.5rem' }}>Assessment Hub</h2>
-                        <p style={{ color: 'var(--color-text-muted)', fontSize: '1.1rem' }}>Select skills to add to your profile and begin testing your proficiency.</p>
+                        <p style={{ color: 'var(--color-text-muted)', fontSize: '1.1rem' }}>Manage your verified skills and take AI-powered assessments.</p>
                     </div>
 
                     <section className="dashboard-section" style={{ marginBottom: '2.5rem' }}>
                         <div className="section-header">
                             <h3>Your Managed Skills</h3>
-                            <Button
-                                variant="primary"
-                                onClick={() => setIsModalOpen(true)}
-                                style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                            >
-                                <Plus size={18} /> Add Skills
-                            </Button>
+                            <div style={{ display: 'flex', gap: '1rem' }}>
+                                <Button variant="outline" onClick={() => navigate('/upskill-plan')} style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <Sparkles size={18} /> My Upskill Plan
+                                </Button>
+                                <Button variant="primary" onClick={() => setIsModalOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <Plus size={18} /> Add Skills
+                                </Button>
+                            </div>
                         </div>
 
+                        {/* MODAL: COMBINED STAGE 2 & 3 */}
                         {isModalOpen && (
                             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-                                <div className="animate-fade-in" style={{ backgroundColor: 'var(--color-bg)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
-                                    <h3 style={{ fontSize: '1.5rem', marginBottom: '1.5rem', color: 'var(--color-primary)' }}>
-                                        {techResult ? 'Assessment Results' : techFlowActive ? `Skill Assessment: ${activeTechSkill}` : shortTestResult ? 'Assessment Complete' : activeShortTest ? `AI Assessment: ${activeShortTest.name}` : 'Add New Skills'}
+                                <div className="animate-fade-in" style={{ backgroundColor: 'var(--color-bg)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
+                                    <h3 style={{ fontSize: '1.5rem', marginBottom: '1.5rem', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        {techResult || majorResult ? 'Assessment Results' : techFlowActive ? `Skill Assessment: ${activeTechSkill}` : 'Add New Skills'}
                                     </h3>
                                     
-                                    {techResult ? (
-                                        <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
-                                            <div style={{ 
-                                                width: '100%', maxWidth: '400px', margin: '0 auto', background: 'var(--color-bg-paper)', 
-                                                padding: '2.5rem 2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)',
-                                                boxShadow: 'var(--shadow-sm)'
-                                            }}>
-                                                <div style={{ color: 'var(--color-primary)', fontSize: '0.875rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem' }}>
-                                                    {activeTechSkill}
-                                                </div>
-                                                <div style={{ fontSize: '1.5rem', fontWeight: '600', color: 'var(--color-text)', marginBottom: '0.5rem' }}>Your Score</div>
-                                                <div style={{ fontSize: '3.5rem', fontWeight: '800', color: 'var(--color-primary)', marginBottom: '0.5rem', lineHeight: 1 }}>
-                                                    {techResult.total_score}<span style={{ fontSize: '1.5rem', color: 'var(--color-text-muted)', fontWeight: '400' }}>/9</span>
-                                                </div>
-                                                <div style={{ fontSize: '1.25rem', fontWeight: '600', color: 'var(--color-text)', marginBottom: '1.5rem' }}>
-                                                    Combined: {techResult.percentage}%
-                                                </div>
-                                                
-                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem', textAlign: 'left' }}>
-                                                    <div style={{ background: 'var(--color-bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}>
-                                                        <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: '700', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Rubric</div>
-                                                        <div style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--color-text)' }}>{techResult.rubric_percentage || 0}%</div>
+                                    {/* RESULTS VIEW */}
+                                    {(techResult || majorResult) ? (
+                                        <div className="animate-fade-in">
+                                            {majorResult ? (
+                                                <div style={{ textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '3.5rem', fontWeight: 800, color: 'var(--color-primary)' }}>{majorResult.overall_score}%</div>
+                                                    <div style={{ color: 'var(--color-text-muted)', fontSize: '1.2rem', marginBottom: '1.5rem' }}>Overall {userMajor} Level: {majorResult.level}</div>
+                                                    <div style={{ background: 'var(--color-bg-paper)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', textAlign: 'left', marginBottom: '2rem' }}>
+                                                        <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 0.5rem 0' }}><Sparkles size={18} color="var(--color-primary)"/> AI Feedback</h4>
+                                                        <p style={{ margin: 0, lineHeight: 1.6 }}>{majorResult.feedback}</p>
                                                     </div>
-                                                    <div style={{ background: 'var(--color-bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}>
-                                                        <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: '700', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Case Study</div>
-                                                        <div style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--color-text)' }}>{techResult.case_study_percentage || 0}%</div>
+                                                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                                                        <Button variant="outline" onClick={() => setMajorResult(null)}>Cancel</Button>
+                                                        <Button onClick={acceptMajorAssessment}>Accept & Add Skills</Button>
                                                     </div>
-                                                </div>
-
-                                                <div style={{ 
-                                                    display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.5rem', 
-                                                    background: 'var(--color-white)', borderRadius: 'var(--radius-full)', border: '1px solid var(--color-border)',
-                                                    fontWeight: '700', color: 'var(--color-text)', marginBottom: '1rem'
-                                                }}>
-                                                    Assessed Level: {techResult.level || "Beginner"}
-                                                </div>
-
-                                                {techResult.feedback && (
-                                                    <div style={{ textAlign: 'left', marginTop: '1rem', padding: '1rem', background: 'rgba(59, 130, 246, 0.03)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
-                                                        <div style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--color-primary)', textTransform: 'uppercase', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                            <Sparkles size={14} /> AI Feedback
-                                                        </div>
-                                                        <p style={{ margin: 0, fontSize: '0.875rem', lineHeight: 1.5, color: 'var(--color-text-muted)' }}>
-                                                            {techResult.feedback}
-                                                        </p>
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div style={{ marginTop: '2.5rem', display: 'flex', justifyContent: 'center' }}>
-                                                <Button onClick={() => {
-                                                    setTechResult(null);
-                                                    setTechFlowActive(false);
-                                                    setIsModalOpen(false);
-                                                }} style={{ padding: '0.75rem 2.5rem' }}>
-                                                    Close & Save
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    ) : techFlowActive ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                            {techLoading ? (
-                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '3rem' }}>
-                                                    <Loader2 className="animate-spin" size={32} color="var(--color-primary)" />
                                                 </div>
                                             ) : (
-                                                <>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                                        <span style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', fontWeight: '600' }}>
-                                                            {currentTechIdx < techQuestions.length 
-                                                                ? `Rubric Question ${currentTechIdx + 1} of ${techQuestions.length}`
-                                                                : `Final Step: Case Study Evaluation`}
-                                                        </span>
-                                                        <div style={{ height: '6px', background: 'var(--color-border)', borderRadius: 'var(--radius-full)', width: '100px', overflow: 'hidden' }}>
-                                                            <div style={{ height: '100%', background: 'var(--color-primary)', width: `${((currentTechIdx + 1) / (techQuestions.length + 1)) * 100}%`, transition: 'width 0.3s ease' }}></div>
-                                                        </div>
+                                                <div style={{ textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '3.5rem', fontWeight: 800, color: 'var(--color-primary)' }}>{techResult.percentage}%</div>
+                                                    <div style={{ color: 'var(--color-text-muted)', fontSize: '1.2rem', marginBottom: '1.5rem' }}>Skill Level: {techResult.level}</div>
+                                                    <div style={{ background: 'var(--color-bg-paper)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', textAlign: 'left', marginBottom: '2rem' }}>
+                                                        <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 0.5rem 0' }}><Sparkles size={14}/> AI Insight</h4>
+                                                        <p style={{ margin: 0 }}>{techResult.feedback}</p>
                                                     </div>
-
-                                                    {currentTechIdx < techQuestions.length ? (
-                                                        <>
-                                                            <div style={{ background: 'var(--color-bg-paper)', padding: '2rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
-                                                                <p style={{ margin: 0, fontSize: '1.125rem', fontWeight: '600', color: 'var(--color-text)', lineHeight: 1.6 }}>
-                                                                    {techQuestions[currentTechIdx]?.question_text}
-                                                                </p>
-                                                            </div>
-
-                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                                                                {techQuestions[currentTechIdx]?.options.map((option, idx) => (
-                                                                    <label 
-                                                                        key={idx} 
-                                                                        style={{ 
-                                                                            display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '1.25rem', 
-                                                                            borderRadius: 'var(--radius-sm)', border: techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text ? '2px solid var(--color-primary)' : '1px solid var(--color-border)', 
-                                                                            background: techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text ? 'rgba(59, 130, 246, 0.05)' : 'var(--color-white)', cursor: 'pointer', transition: 'all 0.2s' 
-                                                                        }}
-                                                                    >
-                                                                        <input 
-                                                                            type="radio" 
-                                                                            name={`tech_option_${currentTechIdx}`}
-                                                                            checked={techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text}
-                                                                            onChange={() => setTechAnswers(prev => ({...prev, [techQuestions[currentTechIdx].question_number]: option.option_text}))}
-                                                                            style={{ width: '1.1rem', height: '1.1rem', accentColor: 'var(--color-primary)' }}
-                                                                        />
-                                                                        <span style={{ fontSize: '1rem', color: 'var(--color-text)' }}>{option.option_text}</span>
-                                                                    </label>
-                                                                ))}
-                                                            </div>
-                                                        </>
-                                                    ) : (
-                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                                            <div style={{ background: 'rgba(59, 130, 246, 0.05)', padding: '1.5rem', borderRadius: 'var(--radius-md)', borderLeft: '4px solid var(--color-primary)' }}>
-                                                                <h5 style={{ margin: '0 0 0.5rem 0', color: 'var(--color-primary)' }}>Problem Scenario Answer</h5>
-                                                                <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--color-text-muted)', lineHeight: '1.6' }}>
-                                                                    <strong>{activeTechSkill}: </strong> {getTechCaseStudyPrompt(activeTechSkill)}
-                                                                    <br /><br />
-                                                                    You may optionally upload supporting diagrams or code.
-                                                                </p>
-                                                            </div>
-
-                                                            <textarea
-                                                                placeholder="Describe your technical approach and reasoning here..."
-                                                                value={caseStudyText}
-                                                                onChange={(e) => setCaseStudyText(e.target.value)}
-                                                                style={{ 
-                                                                    width: '100%', minHeight: '180px', padding: '1rem', borderRadius: 'var(--radius-md)', 
-                                                                    border: '1px solid var(--color-border)', fontSize: '1rem', lineHeight: 1.6,
-                                                                    resize: 'vertical'
-                                                                }}
-                                                            />
-
-                                                            <div style={{ border: '1px dashed var(--color-border)', padding: '1.5rem', borderRadius: 'var(--radius-md)', textAlign: 'center', background: 'var(--color-white)' }}>
-                                                                <input 
-                                                                    type="file" 
-                                                                    id="caseStudyUpload" 
-                                                                    style={{ display: 'none' }} 
-                                                                    onChange={(e) => setCaseStudyFile(e.target.files[0])}
-                                                                />
-                                                                <label htmlFor="caseStudyUpload" style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-                                                                    <UploadCloud size={32} color="var(--color-text-muted)" />
-                                                                    <span style={{ fontSize: '0.9rem', color: 'var(--color-text)' }}>
-                                                                        {caseStudyFile ? caseStudyFile.name : 'Upload supporting evidence (Optional)'}
-                                                                    </span>
-                                                                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>PDF, Image, or Text file</span>
-                                                                </label>
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginTop: '1.5rem' }}>
-                                                        <Button 
-                                                            variant="outline" 
-                                                            onClick={() => setCurrentTechIdx(prev => Math.max(0, prev - 1))}
-                                                            disabled={currentTechIdx === 0}
-                                                        >
-                                                            Previous
-                                                        </Button>
-                                                        
-                                                        {currentTechIdx === techQuestions.length ? (
-                                                            <Button 
-                                                                onClick={submitTechnicalAssessment}
-                                                                disabled={!caseStudyText.trim() || techLoading}
-                                                            >
-                                                                {techLoading ? <Loader2 className="animate-spin" size={18} /> : 'Submit Full Assessment'}
-                                                            </Button>
-                                                        ) : (
-                                                            <Button 
-                                                                onClick={() => setCurrentTechIdx(prev => prev + 1)}
-                                                                disabled={!techAnswers[techQuestions[currentTechIdx].question_number]}
-                                                            >
-                                                                Next
-                                                            </Button>
-                                                        )}
-                                                    </div>
-                                                </>
+                                                    <Button onClick={() => { setTechResult(null); setTechFlowActive(false); setIsModalOpen(false); }}>Close & Return</Button>
+                                                </div>
                                             )}
                                         </div>
-                                    ) : shortTestResult ? (
-                                        <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
-                                            <CheckCircle2 size={48} color="var(--color-success)" style={{ margin: '0 auto 1.5rem auto' }} />
-                                            <div style={{ background: 'var(--color-bg-paper)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', margin: '1.5rem 0' }}>
-                                                <h5 style={{ fontSize: '1.25rem', color: 'var(--color-primary)', marginBottom: '0.25rem' }}>{shortTestResult.name}</h5>
-                                                <div style={{ fontSize: '2.5rem', fontWeight: '800', color: 'var(--color-text)', marginBottom: '0.5rem' }}>{shortTestResult.progress}%</div>
-                                                <div style={{ display: 'inline-block', padding: '0.4rem 1rem', background: 'var(--color-white)', borderRadius: 'var(--radius-full)', fontSize: '0.9rem', fontWeight: '600', border: '1px solid var(--color-border)' }}>
-                                                    Assessed Level: {shortTestResult.level}
+                                    ) : techFlowActive ? (
+                                        /* STAGE 3 CASE STUDY FLOW */
+                                        <div>
+                                            <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between' }}>
+                                                <span>Question {currentTechIdx + 1} of {techQuestions.length + 1}</span>
+                                            </div>
+                                            {currentTechIdx < techQuestions.length ? (
+                                                <div>
+                                                    <div style={{ background: 'var(--color-bg-paper)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
+                                                        {techQuestions[currentTechIdx].question_text}
+                                                    </div>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                                        {techQuestions[currentTechIdx].options.map((opt, i) => (
+                                                            <label key={i} style={{ padding: '1rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                                <input type="radio" checked={techAnswers[techQuestions[currentTechIdx].question_number] === opt.option_text} onChange={() => setTechAnswers({...techAnswers, [techQuestions[currentTechIdx].question_number]: opt.option_text})} />
+                                                                {opt.option_text}
+                                                            </label>
+                                                        ))}
+                                                    </div>
                                                 </div>
-                                                <p style={{ marginTop: '1.5rem', color: 'var(--color-text-muted)', fontSize: '0.95rem' }}>
-                                                    Your AI assessment score has been saved to your profile.<br />
-                                                    Want to officially verify this skill? Take the deep-dive evaluation.
-                                                </p>
-                                            </div>
-                                            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginTop: '2rem' }}>
-                                                <Button variant="outline" onClick={() => { setShortTestResult(null); setIsModalOpen(false); }}>Close</Button>
-                                                <Button onClick={() => { 
-                                                    setShortTestResult(null); 
-                                                    setIsModalOpen(false); 
-                                                    navigate(`/assessment?skill=${encodeURIComponent(shortTestResult.name)}`); 
-                                                }}>
-                                                    Complete Full Assessment
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    ) : activeShortTest ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                            <div style={{ background: 'var(--color-bg-paper)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', borderLeft: '4px solid var(--color-primary)' }}>
-                                                <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 500, lineHeight: 1.6 }}>
-                                                    {activeShortTest.questionObj.question}
-                                                </p>
-                                            </div>
-                                            
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                                                {activeShortTest.questionObj.options.map((option, idx) => (
-                                                    <label 
-                                                        key={idx} 
-                                                        style={{ 
-                                                            display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '1.25rem', 
-                                                            borderRadius: 'var(--radius-sm)', border: shortTestSelection === idx ? '2px solid var(--color-primary)' : '1px solid var(--color-border)', 
-                                                            background: shortTestSelection === idx ? 'rgba(59, 130, 246, 0.05)' : 'var(--color-white)', cursor: 'pointer', transition: 'all 0.2s' 
-                                                        }}
-                                                    >
-                                                        <input 
-                                                            type="radio" 
-                                                            name="assessment_option" 
-                                                            checked={shortTestSelection === idx}
-                                                            onChange={() => setShortTestSelection(idx)}
-                                                            style={{ marginTop: '0.25rem', width: '1.1rem', height: '1.1rem', accentColor: 'var(--color-primary)' }}
-                                                        />
-                                                        <span style={{ fontSize: '0.95rem', lineHeight: 1.5, color: 'var(--color-text)' }}>{option.text}</span>
-                                                    </label>
-                                                ))}
-                                            </div>
-
-                                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
-                                                <Button variant="outline" onClick={() => setActiveShortTest(null)}>Cancel</Button>
-                                                <Button onClick={submitShortTest} disabled={shortTestSelection === null}>
-                                                    Submit & Evaluate
-                                                </Button>
+                                            ) : (
+                                                <div>
+                                                    <h5 style={{ marginBottom: '1rem' }}>Problem Scenario: {activeTechSkill}</h5>
+                                                    <p style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>{getTechCaseStudyPrompt(activeTechSkill)}</p>
+                                                    <textarea value={caseStudyText} onChange={(e) => setCaseStudyText(e.target.value)} style={{ width: '100%', minHeight: '150px', padding: '1rem', marginBottom: '1rem' }} placeholder="Propose your solution here..."/>
+                                                    <input type="file" onChange={(e) => setCaseStudyFile(e.target.files[0])} style={{ marginBottom: '1.5rem' }}/>
+                                                </div>
+                                            )}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1.5rem' }}>
+                                                <Button variant="outline" onClick={() => setCurrentTechIdx(prev => Math.max(0, prev - 1))}>Back</Button>
+                                                {currentTechIdx === techQuestions.length 
+                                                    ? <Button onClick={submitTechnicalAssessment} disabled={techLoading || !caseStudyText.trim()}>{techLoading ? 'Evaluating...' : 'Finish'}</Button>
+                                                    : <Button onClick={() => setCurrentTechIdx(prev => prev + 1)} disabled={!techAnswers[techQuestions[currentTechIdx].question_number]}>Next</Button>
+                                                }
                                             </div>
                                         </div>
                                     ) : (
+                                        /* TABS HUB */
                                         <>
                                             <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
-                                                <button 
-                                                    onClick={() => setActiveTab('technical')}
-                                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: activeTab === 'technical' ? '2px solid var(--color-primary)' : '2px solid transparent', color: activeTab === 'technical' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer' }}
-                                                >
-                                                    Technical Skills
-                                                </button>
-                                                <button 
-                                                    onClick={() => setActiveTab('soft')}
-                                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: activeTab === 'soft' ? '2px solid var(--color-primary)' : '2px solid transparent', color: activeTab === 'soft' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer' }}
-                                                >
-                                                    Soft Skills
-                                                </button>
+                                                <button onClick={() => setActiveTab('technical')} style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: activeTab === 'technical' ? '2px solid var(--color-primary)' : '0', cursor: 'pointer' }}>Technical</button>
+                                                <button onClick={() => setActiveTab('major')} style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: activeTab === 'major' ? '2px solid var(--color-primary)' : '0', cursor: 'pointer' }}>Major Assessment</button>
+                                                <button onClick={() => setActiveTab('soft')} style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: activeTab === 'soft' ? '2px solid var(--color-primary)' : '0', cursor: 'pointer' }}>Soft Skills</button>
                                             </div>
 
+<<<<<<< manar
+                                            {activeTab === 'technical' && (
+                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
+                                                    {dbSkillsList.map(skill => (
+                                                        <button key={skill.skill_name} onClick={() => startTechnicalAssessment(skill.skill_name)} style={{ padding: '1rem', background: 'white', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', textAlign: 'left', cursor: 'pointer' }}>
+                                                            {skill.skill_name}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            {activeTab === 'major' && (
+                                                <div>
+                                                    {!userMajor ? <p>Please set your major in profile.</p> : (
+                                                        <div>
+                                                            <div style={{ background: 'rgba(59, 130, 246, 0.05)', padding: '1.5rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem' }}>
+                                                                <h4 style={{ color: 'var(--color-primary)', margin: '0 0 0.5rem 0' }}>{userMajor} Unified Assessment</h4>
+                                                                <p style={{ margin: 0, fontSize: '0.95rem' }}>{majorAssessmentTask?.task_description || "Loading scenario..."}</p>
+                                                            </div>
+                                                            <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
+                                                                <button onClick={() => setSubmissionMode('text')} style={{ color: submissionMode === 'text' ? 'var(--color-primary)' : '#666', border: 'none', cursor: 'pointer', background: 'none' }}>Text Answer</button>
+                                                                <button onClick={() => setSubmissionMode('file')} style={{ color: submissionMode === 'file' ? 'var(--color-primary)' : '#666', border: 'none', cursor: 'pointer', background: 'none' }}>File Upload</button>
+                                                            </div>
+                                                            {submissionMode === 'text' 
+                                                                ? <textarea value={submission} onChange={(e) => setSubmission(e.target.value)} style={{ width: '100%', minHeight: '150px', padding: '1rem' }} placeholder="Write your full technical response..."/>
+                                                                : <input type="file" onChange={(e) => setSelectedFile(e.target.files[0])} />
+                                                            }
+                                                            <div style={{ marginTop: '1.5rem' }}>
+                                                                <Button onClick={handleMajorSubmit} disabled={majorSubmitting}>{majorSubmitting ? 'Evaluating Full Major...' : 'Submit Major Assessment'}</Button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+=======
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                                                 {activeTab === 'technical' && (
                                                     <div>
@@ -1067,128 +915,93 @@ export const Assessment = () => {
                                                         </div>
                                                     </div>
                                                 )}
+>>>>>>> main
 
-                                                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
-                                                    <Button variant="outline" onClick={() => setIsModalOpen(false)}>Close</Button>
+                                            {activeTab === 'soft' && (
+                                                <div>
+                                                    <p style={{ marginBottom: '1rem', color: '#666' }}>Evaluate your core behavioral attributes.</p>
+                                                    {SOFT_SKILLS_LIST.map(skill => {
+                                                        const isDone = skills.some(s => s.name === skill);
+                                                        const qObj = getShortEvaluationForSkill(skill, 'Soft');
+                                                        if (isDone) return null;
+                                                        return (
+                                                            <div key={skill} style={{ marginBottom: '2rem', border: '1px solid var(--color-border)', padding: '1rem' }}>
+                                                                <h5 style={{ color: 'var(--color-primary)', marginBottom: '0.5rem' }}>{skill}</h5>
+                                                                <p style={{ fontSize: '0.9rem', marginBottom: '1rem' }}>{qObj.question}</p>
+                                                                {qObj.options.map((opt, i) => (
+                                                                    <label key={i} style={{ display: 'block', padding: '0.5rem', cursor: 'pointer' }}>
+                                                                        <input type="radio" checked={softSkillAnswers[skill] === i} onChange={() => setSoftSkillAnswers({...softSkillAnswers, [skill]: i})} />
+                                                                        <span style={{ marginLeft: '0.5rem' }}>{opt.text}</span>
+                                                                    </label>
+                                                                ))}
+                                                            </div>
+                                                        )
+                                                    })}
+                                                    <Button onClick={submitAllSoftSkills} disabled={!allSoftAnswered}>Submit Soft Skills</Button>
                                                 </div>
-                                            </div>
+                                            )}
                                         </>
                                     )}
+
+                                    <div style={{ marginTop: '2rem', textAlign: 'right' }}>
+                                        <Button variant="outline" onClick={() => { setIsModalOpen(false); setTechFlowActive(false); }}>Close</Button>
+                                    </div>
                                 </div>
                             </div>
                         )}
 
                         <div className="jobs-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-                                {skills.map((skill, index) => (
-                                    <div key={`${skill.name}-${index}`} className="job-card animate-fade-in" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
-                                            <div>
-                                                <h4 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--color-primary)', marginBottom: '0.25rem' }}>{skill.name}</h4>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                                                    <span className="match-badge" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
-                                                        {skill.level}
-                                                    </span>
-                                                    <span className={`status ${skill.status === 'Verified' ? 'verified' : (skill.status === 'Pending' ? 'pending' : 'unverified')}`} style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                                        {skill.status === 'Verified' ? <CheckCircle2 size={14} className="check-icon" /> : <Clock size={14} style={{ color: skill.status === 'Pending' ? '#F59E0B' : 'var(--color-text-muted)' }} />}
-                                                        {skill.status}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <button
-                                                onClick={() => handleRemoveSkill(skill.name)}
-                                                style={{ background: 'transparent', border: 'none', color: '#EF4444', cursor: 'pointer', padding: '0.5rem' }}
-                                            >
-                                                <Trash2 size={18} />
-                                            </button>
+                            {skills.map((skill, index) => (
+                                <div key={index} className="job-card animate-fade-in" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                                        <h4 style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--color-primary)' }}>{skill.name}</h4>
+                                        <button onClick={() => handleRemoveSkill(skill.name)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer' }}><Trash2 size={18} /></button>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                                        <span style={{ fontSize: '0.75rem', background: 'var(--color-bg)', padding: '0.2rem 0.5rem', borderRadius: '4px' }}>{skill.level}</span>
+                                        <span style={{ fontSize: '0.75rem', color: skill.status === 'Verified' ? '#10B981' : '#F59E0B' }}>{skill.status}</span>
+                                    </div>
+                                    <div style={{ marginBottom: '1rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.25rem' }}>
+                                            <span>Progress</span>
+                                            <span>{skill.progress}%</span>
                                         </div>
-
-                                        <div className="skill-item" style={{ marginBottom: '1rem' }}>
-                                            <div className="skill-info" style={{ marginBottom: '0.5rem' }}>
-                                                <span style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>AI Evaluation</span>
-                                                <span className="skill-percentage">{skill.progress}%</span>
-                                            </div>
-                                            <div className="progress-bar-bg">
-                                                <div
-                                                    className={`progress-bar-fill ${skill.status === 'Verified' ? 'verified' : 'unverified'}`}
-                                                    style={{ width: `${skill.progress}%` }}
-                                                ></div>
-                                            </div>
-                                        </div>
-
-                                        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                                            {skill.status === 'Verified' && (
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--color-accent)', fontSize: '0.875rem', fontWeight: '600', width: '100%', justifyContent: 'center', padding: '0.5rem', border: '1px dashed var(--color-accent)', borderRadius: 'var(--radius-md)' }}>
-                                                    <CheckCircle2 size={16} /> Strongly Verified
-                                                </div>
-                                            )}
-                                            {skill.status === 'Not tested' ? (
-                                                <Button 
-                                                    variant="outline" 
-                                                    className="btn-full" 
-                                                    style={{ fontSize: '0.8125rem' }}
-                                                    onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}
-                                                >
-                                                    {skill.category === 'Soft' ? 'Reassess' : 'Complete Assessment'}
-                                                </Button>
-                                            ) : (
-                                                <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
-                                                    <Button 
-                                                        variant="outline" 
-                                                        style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem' }}
-                                                        onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}
-                                                    >
-                                                        Reassess
-                                                    </Button>
-                                                    {skill.category !== 'Soft' && (
-                                                        <Button 
-                                                            variant="outline" 
-                                                            style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem', opacity: 0.6, cursor: 'not-allowed' }}
-                                                            onClick={() => {}}
-                                                            disabled
-                                                        >
-                                                            Show Matching
-                                                        </Button>
-                                                    )}
-                                                </div>
-                                            )}
+                                        <div style={{ height: '6px', background: '#eee', borderRadius: '3px' }}>
+                                            <div style={{ width: `${skill.progress}%`, height: '100%', background: 'var(--color-primary)', borderRadius: '3px' }}></div>
                                         </div>
                                     </div>
-                                ))}
-                                {skills.length === 0 && (
-                                    <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '4rem', background: 'var(--color-white)', borderRadius: 'var(--radius-xl)', border: '1px dashed var(--color-border)' }}>
-                                        <p style={{ color: 'var(--color-text-muted)', fontSize: '1.125rem' }}>No skills selected for assessment yet.</p>
-                                        <Button onClick={() => setIsModalOpen(true)} style={{ marginTop: '1.5rem' }}>+ Add Your First Skill</Button>
+                                    <div style={{ marginTop: 'auto' }}>
+                                        <Button variant="outline" style={{ width: '100%' }} onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}>
+                                            {skill.status === 'Verified' ? 'Reassess' : 'Verify Skill'}
+                                        </Button>
                                     </div>
-                                )}
-                            </div>
+                                </div>
+                            ))}
+                        </div>
                     </section>
                 </div>
-                <style>{`
-                    .pending { color: #F59E0B; }
-                    .unverified { color: var(--color-text-muted); }
-                `}</style>
             </DashboardLayout>
         );
     }
 
-    // ============================================
-    // RENDER: EVALUATION VIEW
-    // ============================================
-    if (!skillDetails || !evaluationData) {
-        return (
-            <DashboardLayout user={user} onLogout={handleLogout}>
-                <div style={{ padding: '2rem', textAlign: 'center' }}>
-                    <AlertCircle size={48} color="var(--color-error)" style={{ marginBottom: '1rem', margin: '0 auto' }} />
-                    <h3>Assessment Not Configured</h3>
-                    <p>There are no evaluation questions mapped to {activeSkillName}.</p>
-                    <Button onClick={() => navigate('/assessment')} style={{ marginTop: '1rem' }}>Back to Hub</Button>
-                </div>
-            </DashboardLayout>
-        );
-    }
-
+    // === INDIVIDUAL SKILL EVALUATION VIEW (Stage 3 Layout) ===
     return (
         <DashboardLayout user={user} onLogout={handleLogout}>
+<<<<<<< manar
+            <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem' }}>
+                <button onClick={() => navigate('/assessment')} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '2rem', background: 'none', border: 'none', cursor: 'pointer', color: '#666' }}>
+                    <ChevronLeft size={16} /> Back to Hub
+                </button>
+
+                {!result ? (
+                    <div style={{ background: 'white', padding: '2rem', borderRadius: '1rem', border: '1px solid #eee' }}>
+                        <h2 style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>{activeSkillName} Evaluation</h2>
+                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid #eee' }}>
+                            <button onClick={() => setSubmissionMode('quiz')} style={{ padding: '1rem', borderBottom: submissionMode === 'quiz' ? '2px solid blue' : '0', cursor: 'pointer' }}>AI Quiz</button>
+                            <button onClick={() => setSubmissionMode('text')} style={{ padding: '1rem', borderBottom: submissionMode === 'text' ? '2px solid blue' : '0', cursor: 'pointer' }}>Scenario Answer</button>
+                            <button onClick={() => setSubmissionMode('upload')} style={{ padding: '1rem', borderBottom: submissionMode === 'upload' ? '2px solid blue' : '0', cursor: 'pointer' }}>Upload Evidence</button>
+                        </div>
+=======
             <div className="dashboard-section" style={{ maxWidth: '1000px', margin: '0 auto' }}>
                 <div style={{ marginBottom: '1.5rem' }}>
                     <button 
@@ -1363,45 +1176,28 @@ export const Assessment = () => {
                                     </p>
                                 </div>
                             )}
+>>>>>>> main
 
-                            {submissionMode === 'quiz' ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                                    {quizLoading ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '3rem' }}>
-                                            <Loader2 className="animate-spin" size={32} color="var(--color-primary)" style={{ marginBottom: '1rem' }} />
-                                            <div style={{ color: 'var(--color-text-muted)' }}>Generating structured statements via AI...</div>
-                                        </div>
-                                    ) : (
-                                        quizQuestions.map((q, qIndex) => (
-                                            <div key={qIndex} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
-                                                <p style={{ margin: '0 0 1rem 0', fontWeight: 600, fontSize: '1.05rem', color: 'var(--color-text)' }}>
-                                                    {qIndex + 1}. {q}
-                                                </p>
-                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem' }}>
-                                                    {[
-                                                        { label: 'Strongly Agree', value: 10 },
-                                                        { label: 'Agree', value: 8 },
-                                                        { label: 'Neutral', value: 5 },
-                                                        { label: 'Disagree', value: 2 },
-                                                        { label: 'Strongly Disagree', value: 0 }
-                                                    ].map((opt, oIndex) => (
-                                                        <label key={oIndex} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.95rem' }}>
-                                                            <input 
-                                                                type="radio" 
-                                                                name={`question-${qIndex}`} 
-                                                                value={opt.value}
-                                                                checked={quizAnswers[qIndex] === opt.value}
-                                                                onChange={() => {
-                                                                    const newAns = [...quizAnswers];
-                                                                    newAns[qIndex] = opt.value;
-                                                                    setQuizAnswers(newAns);
-                                                                }}
-                                                            />
-                                                            {opt.label}
+                        {submissionMode === 'quiz' ? (
+                            <div>
+                                {quizLoading ? <p>Generating quiz...</p> : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                        {quizQuestions.map((q, i) => (
+                                            <div key={i}>
+                                                <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{i+1}. {q}</p>
+                                                <div style={{ display: 'flex', gap: '1rem' }}>
+                                                    {[10, 7, 5, 2, 0].map(v => (
+                                                        <label key={v} style={{ fontSize: '0.8rem' }}>
+                                                            <input type="radio" checked={quizAnswers[i] === v} onChange={() => { const a = [...quizAnswers]; a[i] = v; setQuizAnswers(a); }} /> {v > 5 ? 'Agree' : v < 5 ? 'Disagree' : 'Neutral'}
                                                         </label>
                                                     ))}
                                                 </div>
                                             </div>
+<<<<<<< manar
+                                        ))}
+                                    </div>
+                                )}
+=======
                                         ))
                                     )}
                                 </div>
@@ -1496,67 +1292,32 @@ export const Assessment = () => {
                                 >
                                     {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> Processing...</> : 'Submit Assessment'}
                                 </Button>
+>>>>>>> main
                             </div>
-                        </div>
+                        ) : submissionMode === 'text' ? (
+                            <div>
+                                <p style={{ background: '#f9f9f9', padding: '1rem', borderRadius: '4px', marginBottom: '1rem' }}>{evaluationData?.question}</p>
+                                <textarea value={submission} onChange={(e) => setSubmission(e.target.value)} style={{ width: '100%', minHeight: '200px' }} placeholder="Detail your experience..."/>
+                            </div>
+                        ) : (
+                            <input type="file" onChange={(e) => setSelectedFile(e.target.files[0])} />
+                        )}
 
-                        {/* Sidebar Info */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                            <div style={{ background: 'var(--color-bg-paper)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', padding: '1.5rem' }}>
-                                <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: 0 }}>
-                                    <Sparkles size={18} color="#eab308" /> Evaluation Criteria
-                                </h4>
-                                <ul style={{ paddingLeft: '1.25rem', color: 'var(--color-text-muted)', fontSize: '0.875rem', lineHeight: 1.6 }}>
-                                    <li>Provide real-world context</li>
-                                    <li>Use proper technical vocabulary</li>
-                                    <li>Explain your complete flow</li>
-                                    <li>Minimum 150 characters expected</li>
-                                </ul>
-                            </div>
-
-                            <div style={{ background: 'linear-gradient(135deg, var(--color-primary-dark), var(--color-primary))', border: 'none', borderRadius: 'var(--radius-xl)', padding: '1.5rem', color: 'white' }}>
-                                <h4 style={{ marginTop: 0 }}>Pro Tip</h4>
-                                <p style={{ fontSize: '0.875rem', opacity: 0.9, lineHeight: 1.5, margin: 0 }}>
-                                    Generic or purely theoretical answers will yield a lower score. Provide an exact scenario or structure to achieve a Verified status.
-                                </p>
-                            </div>
+                        <div style={{ marginTop: '2rem' }}>
+                            <Button onClick={handleSubmitAssessment} disabled={isSubmitting}>{isSubmitting ? 'Evaluating...' : 'Submit Evaluation'}</Button>
                         </div>
                     </div>
                 ) : (
-                    /* Result Section */
-                    <div className="animate-fade-in" style={{ background: 'var(--color-bg-paper)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', padding: '3rem', textAlign: 'center', boxShadow: 'var(--shadow-md)' }}>
-                        <div style={{ width: '80px', height: '80px', background: result.status === 'Verified' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(234, 179, 8, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem auto', color: result.status === 'Verified' ? 'var(--color-success)' : 'var(--color-warning)' }}>
-                            {result.status === 'Verified' ? <CheckCircle2 size={48} /> : <AlertCircle size={48} />}
+                    <div style={{ textAlign: 'center', background: 'white', padding: '3rem', borderRadius: '1rem' }}>
+                        <div style={{ fontSize: '3rem', fontWeight: 800, color: 'var(--color-primary)' }}>{result.score}%</div>
+                        <h3>Level: {result.level}</h3>
+                        <div style={{ background: '#f0f7ff', padding: '1.5rem', borderRadius: '12px', margin: '2rem 0', textAlign: 'left' }}>
+                            <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Sparkles size={18}/> AI Feedback</h4>
+                            <p>{result.suggestion}</p>
                         </div>
-                        
-                        <h2 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>
-                            Score: {result.score}% ({result.level})
-                        </h2>
-                        <p style={{ color: 'var(--color-text-muted)', maxWidth: '500px', margin: '0 auto 2.5rem auto', fontWeight: 500, fontSize: '1.1rem' }}>
-                            {result.status === 'Verified' 
-                                ? 'Congratulations! You successfully demonstrated your proficiency.' 
-                                : 'Your submission is a great start, but it needs a bit more detail to verify.'}
-                        </p>
-
-                        <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: '24px', padding: '2.5rem', textAlign: 'left', position: 'relative', overflow: 'hidden' }}>
-                            <div style={{ position: 'absolute', top: '-10px', right: '-10px', opacity: 0.1 }}>
-                                <Lightbulb size={120} color="var(--color-primary)" />
-                            </div>
-                            
-                            <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: 0, color: 'var(--color-primary)' }}>
-                                <Sparkles size={20} /> Evaluation Feedback
-                            </h4>
-                            <p style={{ lineHeight: 1.7, color: 'var(--color-text)', fontSize: '1.05rem', margin: '1rem 0 0 0', position: 'relative', zIndex: 1 }}>
-                                {result.suggestion}
-                            </p>
-                        </div>
-
-                        <div style={{ marginTop: '3rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
-                            <Button variant="outline" onClick={resetEvaluation}>Take Again</Button>
-                            <Button className="btn-primary" onClick={() => navigate('/assessment')}>Return to Hub</Button>
-                        </div>
+                        <Button onClick={resetEvaluation}>Finish</Button>
                     </div>
-                    );
-                })()}
+                )}
             </div>
         </DashboardLayout>
     );
