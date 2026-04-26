@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/authService';
+import { API_BASE_URL } from '../config/api';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Button } from '../components/Button';
 import {
@@ -94,7 +95,7 @@ export const Assessment = () => {
             setLoading(true);
             try {
                 // Fetch current user's profile first to get specialization
-                const profileRes = await fetch(`http://127.0.0.1:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+                const profileRes = await fetch(`${API_BASE_URL}/api/user/profile?email=${encodeURIComponent(user.email)}`);
                 let userSkillNames = [];
                 let pulledMajor = null;
                 if (profileRes.ok) {
@@ -106,14 +107,14 @@ export const Assessment = () => {
                 }
 
                 // Fetch ALL skills (for skill detail lookups)
-                const skillsRes = await fetch('http://127.0.0.1:8000/api/skills');
+                const skillsRes = await fetch(`${API_BASE_URL}/api/skills`);
                 const allDbSkills = skillsRes.ok ? await skillsRes.json() : [];
 
                 // Fetch skills filtered server-side by specialization (more reliable)
                 let specializedSkills = [];
                 if (pulledMajor && pulledMajor !== 'Not specified') {
                     const specRes = await fetch(
-                        `http://127.0.0.1:8000/api/skills/by-specialization?major=${encodeURIComponent(pulledMajor)}`
+                        `${API_BASE_URL}/api/skills/by-specialization?major=${encodeURIComponent(pulledMajor)}`
                     );
                     specializedSkills = specRes.ok ? await specRes.json() : [];
                     console.log(`[Assessment] Skills for "${pulledMajor}":`, specializedSkills.length, specializedSkills.map(s => s.skill_name));
@@ -180,7 +181,7 @@ export const Assessment = () => {
                     }
 
                     setQuizLoading(true);
-                    fetch(`http://127.0.0.1:8000/api/assessment/quiz-questions?skill_name=${encodeURIComponent(activeSkillName)}&category=${encodeURIComponent(category === 'Soft' ? 'Soft' : category)}`)
+                    fetch(`${API_BASE_URL}/api/assessment/quiz-questions?skill_name=${encodeURIComponent(activeSkillName)}&category=${encodeURIComponent(category === 'Soft' ? 'Soft' : category)}`)
                         .then(res => res.json())
                         .then(data => {
                             const qs = data.questions || [];
@@ -203,13 +204,13 @@ export const Assessment = () => {
     const saveSkillsToProfile = async (updatedSkillNames) => {
         if (!user || !user.email) return;
         try {
-            const res = await fetch(`http://localhost:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+            const res = await fetch(`${API_BASE_URL}/api/user/profile?email=${encodeURIComponent(user.email)}`);
             if (!res.ok) throw new Error("Could not fetch profile");
             const profileData = await res.json();
 
             profileData.skills = updatedSkillNames;
 
-            await fetch('http://127.0.0.1:8000/api/user/profile', {
+            await fetch(`${API_BASE_URL}/api/user/profile`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(profileData)
@@ -299,7 +300,7 @@ export const Assessment = () => {
 
         // Save assessment result record — always use canonical skill name as skillId
         try {
-            await fetch('http://127.0.0.1:8000/api/assessment/result', {
+            await fetch(`${API_BASE_URL}/api/assessment/result`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -330,7 +331,7 @@ export const Assessment = () => {
         setActiveTechSkill(skillName);
         try {
             const majorParam = userMajor ? `&major=${encodeURIComponent(userMajor)}` : '';
-            const res = await fetch(`http://127.0.0.1:8000/api/technical-questions?skill_name=${encodeURIComponent(skillName)}${majorParam}`);
+            const res = await fetch(`${API_BASE_URL}/api/technical-questions?skill_name=${encodeURIComponent(skillName)}${majorParam}`);
             const data = await res.json();
             if (data.questions && data.questions.length > 0) {
                 setTechQuestions(data.questions);
@@ -360,7 +361,7 @@ export const Assessment = () => {
                 }))
             };
 
-            const res = await fetch('http://127.0.0.1:8000/api/technical-assessment/score', {
+            const res = await fetch(`${API_BASE_URL}/api/technical-assessment/score`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -390,7 +391,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                 formData.append('file', caseStudyFile);
             }
 
-            const caseStudyRes = await fetch('http://127.0.0.1:8000/api/technical-assessment/case-study', {
+            const caseStudyRes = await fetch(`${API_BASE_URL}/api/technical-assessment/case-study`, {
                 method: 'POST',
                 body: formData
             });
@@ -445,7 +446,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
 
             // Save result record
             try {
-                await fetch('http://127.0.0.1:8000/api/assessment/result', {
+                await fetch(`${API_BASE_URL}/api/assessment/result`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -593,7 +594,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
             const questionObj = getShortEvaluationForSkill(softSkillName, 'Soft');
             const selectedOption = questionObj.options[softSkillAnswers[softSkillName]];
             try {
-                await fetch('http://127.0.0.1:8000/api/assessment/result', {
+                await fetch(`${API_BASE_URL}/api/assessment/result`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -696,7 +697,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                     }
 
                     console.log("[Assessment] Sending unified mixed/voice payload", { email: user.email, skill: activeSkillName });
-                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/voice_evaluate_multi', {
+                    const response = await fetch(`${API_BASE_URL}/api/user/assessment/voice_evaluate_multi`, {
                         method: 'POST',
                         body: formData
                     });
@@ -711,7 +712,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                         expected_keywords: (evaluationData?.scenarios || []).map(s => s.keywords)
                     };
                     console.log("[Assessment] Sending all-text payload", payload);
-                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/text_evaluate_multi', {
+                    const response = await fetch(`${API_BASE_URL}/api/user/assessment/text_evaluate_multi`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -726,7 +727,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                 }
                 const payload = { email: user.email, skill_name: activeSkillName, answers: quizAnswers };
                 console.log("[Assessment] Sending quiz payload", payload);
-                const response = await fetch('http://127.0.0.1:8000/api/user/assessment/quiz_evaluate', {
+                const response = await fetch(`${API_BASE_URL}/api/user/assessment/quiz_evaluate`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -743,7 +744,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                 formData.append('skill_name', activeSkillName);
                 formData.append('file', selectedFile);
                 console.log("[Assessment] Sending upload payload", { email: user.email, skill: activeSkillName, file: selectedFile.name });
-                const response = await fetch('http://127.0.0.1:8000/api/user/assessment/upload_evaluate', {
+                const response = await fetch(`${API_BASE_URL}/api/user/assessment/upload_evaluate`, {
                     method: 'POST', body: formData
                 });
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -765,7 +766,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                     formData.append('expected_keywords', allKeywords);
                     formData.append('submission_text', allAns);
                     console.log("[Assessment] Sending text-evaluate payload", { email: user.email, skill: activeSkillName });
-                    const response = await fetch('http://127.0.0.1:8000/api/user/assessment/text_evaluate', {
+                    const response = await fetch(`${API_BASE_URL}/api/user/assessment/text_evaluate`, {
                         method: 'POST', body: formData
                     });
                     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -775,7 +776,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                         setIsSubmitting(false);
                         return;
                     }
-                    const response = await fetch('http://localhost:8000/api/user/assessment', {
+                    const response = await fetch(`${API_BASE_URL}/api/user/assessment`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -789,7 +790,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                 }
             }
             console.log("[Assessment] API success response:", data);
-            await fetch('http://127.0.0.1:8000/api/assessment/result', {
+            await fetch(`${API_BASE_URL}/api/assessment/result`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
+import { API_BASE_URL } from '../config/api';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
@@ -43,7 +44,7 @@ export const Profile = () => {
 
         const fetchProfile = async () => {
             try {
-                const response = await fetch(`http://127.0.0.1:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
+                const response = await fetch(`${API_BASE_URL}/api/user/profile?email=${encodeURIComponent(user.email)}`);
                 if (response.ok) {
                     const data = await response.json();
                     setProfileData({
@@ -63,7 +64,7 @@ export const Profile = () => {
 
         const fetchSkillsFromDB = async () => {
             try {
-                const response = await fetch('http://127.0.0.1:8000/api/skills');
+                const response = await fetch(`${API_BASE_URL}/api/skills`);
                 if (response.ok) {
                     const data = await response.json();
                     const technical = data.filter(s => s.category?.toLowerCase() === 'technical');
@@ -89,7 +90,7 @@ export const Profile = () => {
         setError('');
 
         try {
-            const response = await fetch('http://127.0.0.1:8000/api/user/profile', {
+            const response = await fetch(`${API_BASE_URL}/api/user/profile`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { authService } from '../services/authService';
+import { API_BASE_URL } from '../config/api';
 import { Wrench, BookOpen, Layers, Target, ChevronRight, AlertCircle, X } from 'lucide-react';
 import { Button } from '../components/Button';
 
@@ -27,7 +28,7 @@ export const Skills = () => {
         
         const fetchAllSkillsSingleRequest = async () => {
             try {
-                const res = await fetch(`http://127.0.0.1:8000/api/skills/for-user?email=${encodeURIComponent(userEmail)}`);
+                const res = await fetch(`${API_BASE_URL}/api/skills/for-user?email=${encodeURIComponent(userEmail)}`);
                 if (res.ok && isMounted) {
                     const result = await res.json();
                     setData(result);
