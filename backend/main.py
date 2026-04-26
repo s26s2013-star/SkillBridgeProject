@@ -1213,6 +1213,7 @@ def score_technical_assessment(submission: TechAssessmentSubmission):
         "per_question_scores": per_question_scores
     }
 
+
 @app.post("/api/technical-assessment/case-study")
 async def evaluate_case_study(
     skill_name: str = Form(...),
@@ -1223,26 +1224,81 @@ async def evaluate_case_study(
     import json
     import re
     
-    # Generic fallback response
-    fallback_response = {
-        "problem_identification": 12,
-        "solution_appropriateness": 12,
-        "technical_depth": 12,
-        "practical_application": 12,
-        "clarity_and_evidence": 12,
-        "case_study_percentage": 60,
-        "level": "Beginner",
-        "feedback": "AI evaluation skipped or encountered an error. Default values applied."
-    }
-    
+    def get_fallback_evaluation(text: str, skill: str, base_error: str = "") -> dict:
+        # Remove standard frontend headers to evaluate actual user input
+        clean_text = text
+        headers = [
+            "Problem Understanding:",
+            "Root Cause / Challenge Analysis:",
+            "Proposed Technical Solution:",
+            "Implementation Steps:",
+            "Testing, Edge Cases, and Improvements:"
+        ]
+        for h in headers:
+            clean_text = clean_text.replace(h, "")
+        clean_text = clean_text.strip()
+        
+        score = 0
+        feedback = ""
+        
+        if not clean_text:
+            score = 0
+            feedback = "Answer is empty. Please provide a detailed case study answer."
+        else:
+            words = clean_text.split()
+            if len(clean_text) < 80:
+                score = 10
+                feedback = "Answer is too short to accurately assess technical depth."
+            elif len(words) > 0 and (len(set(words)) / len(words)) < 0.3:
+                score = 10
+                feedback = "Answer contains too much repetition and lacks substantive technical explanation."
+            else:
+                max_word_len = max((len(w) for w in words), default=0)
+                if max_word_len > 30 and "http" not in clean_text.lower():
+                    score = 10
+                    feedback = "Answer appears to contain gibberish or nonsensical text."
+                else:
+                    common_tech_terms = {
+                        "api", "database", "server", "code", "function", "system", "data", "user", "error", 
+                        "test", "implement", "design", "architecture", "security", "performance", "client", 
+                        "network", "cloud", "bug", "issue", "مشكلة", "حل", "برمجة", "خادم", "بيانات", 
+                        "نظام", "خطأ", "تطبيق", "شبكة"
+                    }
+                    text_lower = clean_text.lower()
+                    skill_lower = skill.lower()
+                    
+                    has_skill_mention = skill_lower in text_lower
+                    has_tech_term = any(term in text_lower for term in common_tech_terms)
+                    
+                    if not (has_skill_mention or has_tech_term):
+                        score = 25
+                        feedback = "Answer does not appear to mention relevant technical terms for the skill/scenario. It is too generic or unrelated."
+                    else:
+                        score = 40
+                        feedback = "Answer evaluated via heuristic rules due to AI unavailability. Contains basic technical elements but needs deeper review."
+                        
+        if base_error:
+            feedback = f"AI Error ({base_error}). " + feedback
+            
+        section_score = score // 5
+        return {
+            "problem_identification": section_score,
+            "solution_appropriateness": section_score,
+            "technical_depth": section_score,
+            "practical_application": section_score,
+            "clarity_and_evidence": section_score,
+            "case_study_percentage": score,
+            "level": "Beginner",
+            "feedback": feedback
+        }
+
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return fallback_response
+        return get_fallback_evaluation(case_study_text, skill_name, "No API Key configured")
 
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
         
         file_content = ""
         if file:
@@ -1281,7 +1337,15 @@ async def evaluate_case_study(
           "feedback": "string"
         }}
         """
-        response = model.generate_content(prompt)
+        
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            response = model.generate_content(prompt)
+        except Exception as e:
+            print(f"Failed with gemini-1.5-flash-latest, falling back to gemini-1.5-flash. Error: {e}")
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            
         text = response.text
         
         # Robust JSON extraction: Find first '{' and last '}'
@@ -1308,10 +1372,7 @@ async def evaluate_case_study(
 
     except Exception as e:
         print(f"Case Study evaluation error: {e}")
-        error_msg = str(e)
-        fallback = dict(fallback_response)
-        fallback["feedback"] = f"AI Evaluation encountered an error: {error_msg}. Default score applied."
-        return fallback
+        return get_fallback_evaluation(case_study_text, skill_name, str(e))
 
 @app.post("/api/user/assessment/text_evaluate_multi")
 async def evaluate_text_multi(sub: MultiAssessmentSubmission):
@@ -1465,3 +1526,112 @@ async def evaluate_voice_multi(
         "transcriptions": transcriptions,
         "per_scenario": per_scenario
     }
+
+@app.get("/api/market/top-skills")
+def get_top_skills():
+    from datetime import datetime
+    import os
+    import requests
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    
+    rapidapi_key = os.getenv("RAPIDAPI_KEY")
+    rapidapi_host = os.getenv("RAPIDAPI_HOST")
+    
+    if not rapidapi_key:
+        return {
+            "error": True,
+            "message": "Live Oman job market data is unavailable. Please configure RAPIDAPI_KEY."
+        }
+        
+    url = "https://jsearch.p.rapidapi.com/search"
+    headers = {
+        "X-RapidAPI-Key": rapidapi_key,
+        "X-RapidAPI-Host": rapidapi_host
+    }
+    params = {
+        "query": "software engineer Oman",
+        "page": "1",
+        "num_pages": "1",
+        "country": "om"
+    }
+    
+    skill_keywords = {
+      "Python": ["python"],
+      "JavaScript": ["javascript", "js"],
+      "React": ["react", "react.js"],
+      "Backend APIs": ["api", "rest api", "backend", "node.js", "fastapi"],
+      "Cyber Security": ["cybersecurity", "cyber security", "soc", "incident response", "vulnerability", "penetration testing", "network security"],
+      "Cloud Computing": ["cloud", "aws", "azure", "google cloud", "gcp", "cloud security"],
+      "Networking": ["network", "tcp/ip", "osi", "routing", "switching", "firewall", "lan", "wan"],
+      "SQL": ["sql", "mysql", "postgresql", "oracle database", "database"],
+      "Data Analysis": ["data analyst", "data analysis", "power bi", "tableau", "excel", "analytics"],
+      "Machine Learning": ["machine learning", "ml", "ai", "artificial intelligence"],
+      "UI/UX": ["ui/ux", "user interface", "user experience", "figma"],
+      "ERP Systems": ["erp", "sap", "oracle erp"],
+      "IT Project Management": ["project management", "pmp", "agile", "scrum"],
+      "Systems Analysis": ["systems analyst", "system analysis", "requirements analysis"],
+      "Technical Support": ["it support", "helpdesk", "troubleshooting", "technical support"]
+    }
+
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        raw_jobs = data.get("data", [])
+        
+        total_jobs = len(raw_jobs)
+        skill_counts = {skill: {"demand_count": 0, "sample_jobs": []} for skill in skill_keywords}
+        
+        for job in raw_jobs:
+            title = job.get("job_title", "")
+            description = job.get("job_description", "")
+            combined_text = f"{title} {description}".lower()
+            
+            # Extract common fields for sample jobs
+            city = job.get("job_city") or ""
+            country = job.get("job_country") or ""
+            location = f"{city}, {country}".strip(", ") or "Oman"
+            
+            sample_job_info = {
+                "title": title,
+                "company": job.get("employer_name", ""),
+                "location": location,
+                "apply_link": job.get("job_apply_link", "")
+            }
+            
+            for skill, keywords in skill_keywords.items():
+                if any(kw.lower() in combined_text for kw in keywords):
+                    skill_counts[skill]["demand_count"] += 1
+                    if len(skill_counts[skill]["sample_jobs"]) < 3:
+                        skill_counts[skill]["sample_jobs"].append(sample_job_info)
+        
+        top_skills = []
+        for skill, info in skill_counts.items():
+            if info["demand_count"] > 0:
+                top_skills.append({
+                    "skill": skill,
+                    "demand_count": info["demand_count"],
+                    "salary_status": "Unavailable",
+                    "average_salary": None,
+                    "salary_currency": None,
+                    "sample_jobs": info["sample_jobs"]
+                })
+        
+        # Sort by demand_count descending
+        top_skills.sort(key=lambda x: x["demand_count"], reverse=True)
+        
+        return {
+            "source": "JSearch API via RapidAPI",
+            "country": "Oman",
+            "last_updated": datetime.utcnow().isoformat(),
+            "total_jobs_analyzed": total_jobs,
+            "top_skills": top_skills
+        }
+    except Exception as e:
+        return {
+            "error": True,
+            "message": "Live Oman job market data is unavailable.",
+            "details": str(e)
+        }
