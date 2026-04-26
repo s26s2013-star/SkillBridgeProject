@@ -22,7 +22,6 @@ export const Sidebar = ({ user, onLogout }) => {
                 <div className="sidebar-logo-wrapper">
                     <img src={logo} alt="SkillsBridge Logo" className="sidebar-logo" />
                 </div>
-                <h1 className="sidebar-title">SkillsBridge</h1>
             </div>
 
 

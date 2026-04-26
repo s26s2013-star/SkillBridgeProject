@@ -146,35 +146,24 @@ a:hover {
 }
 
 .sidebar-header {
-  padding: 2.5rem 1.5rem;
+  padding: 2.5rem 1.5rem 1.5rem;
   display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 12px;
 }
 
 .sidebar-logo-wrapper {
-  height: 48px;
-  width: 48px;
-  overflow: hidden;
+  width: 150px;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  /* Shows the top (icon) part of the image */
+  align-items: center;
+  margin-bottom: 0.5rem;
 }
 
 .sidebar-logo {
-  height: 60px;
-  /* Scaled up so the icon part fills the 48px wrapper */
-  width: auto;
+  width: 100%;
+  height: auto;
   object-fit: contain;
-}
-
-.sidebar-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: #2E6F7E;
-  letter-spacing: -0.01em;
-  line-height: 1;
 }
 
 

@@ -65,7 +65,7 @@ export const Dashboard = () => {
 
                 const fields = [
                     profileData.name && profileData.name !== 'User',
-                    profileData.major && profileData.major !== 'Not specified',
+                    profileData.major && profileData.major !== 'Not specified' && profileData.major.toLowerCase() !== 'general',
                     profileData.experience > 0,
                     profileData.location && profileData.location !== 'Not specified',
                     profileData.job_type && profileData.job_type !== 'Not specified',

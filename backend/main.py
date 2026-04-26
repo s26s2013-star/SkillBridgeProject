@@ -201,7 +201,7 @@ def get_specializations():
     for major in distinct_majors:
         if isinstance(major, str) and major.strip():
             trimmed = major.strip()
-            if trimmed not in clean_majors:
+            if trimmed not in clean_majors and trimmed.lower() != "general":
                 clean_majors.append(trimmed)
                 
     return sorted(clean_majors)

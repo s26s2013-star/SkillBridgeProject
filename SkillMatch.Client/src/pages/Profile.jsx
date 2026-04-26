@@ -162,7 +162,7 @@ export const Profile = () => {
                             <div className="profile-detail-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '2rem' }}>
                                 <div>
                                     <h5 style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '0.5rem' }}>Major</h5>
-                                    <p style={{ fontWeight: '600', fontSize: '1.05rem' }}>{profileData.major || 'Not specified'}</p>
+                                    <p style={{ fontWeight: '600', fontSize: '1.05rem' }}>{(profileData.major && profileData.major.toLowerCase() !== 'general') ? profileData.major : 'Not specified'}</p>
                                 </div>
                                 <div>
                                     <h5 style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '0.5rem' }}>Experience</h5>
