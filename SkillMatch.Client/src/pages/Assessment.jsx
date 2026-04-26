@@ -3,8 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/authService';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Button } from '../components/Button';
-import { 
-    Code2, UploadCloud, CheckCircle2, AlertCircle, ChevronLeft, 
+import {
+    Code2, UploadCloud, CheckCircle2, AlertCircle, ChevronLeft,
     FileText, Loader2, Sparkles, Lightbulb, Plus, Clock, Info, Trash2,
     Target
 } from 'lucide-react';
@@ -15,7 +15,7 @@ export const Assessment = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const user = authService.getCurrentUser() || {};
-    
+
     // Determine the view mode from URL params
     const query = new URLSearchParams(location.search);
     const activeSkillName = query.get('skill');
@@ -42,11 +42,15 @@ export const Assessment = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [result, setResult] = useState(null);
     const [selectedFile, setSelectedFile] = useState(null);
-    const [submissionMode, setSubmissionMode] = useState('quiz');
+    const [submissionMode, setSubmissionMode] = useState('text');
     const [wantsToReassess, setWantsToReassess] = useState(false);
-    const [quizQuestions, setQuizQuestions] = useState([]);
-    const [quizAnswers, setQuizAnswers] = useState(new Array(10).fill(null));
-    const [quizLoading, setQuizLoading] = useState(false);
+    const [caseStudyAnswers, setCaseStudyAnswers] = useState({
+        problem_understanding: '',
+        root_cause: '',
+        proposed_solution: '',
+        implementation_steps: '',
+        testing_edge_cases: ''
+    });
 
     // === VOICE RECORDING STATE ===
     const [isRecording, setIsRecording] = useState(false);
@@ -129,7 +133,7 @@ export const Assessment = () => {
                     const level = typeof skillObj === 'string' ? (index % 3 === 0 ? 'Advanced' : index % 3 === 1 ? 'Intermediate' : 'Beginner') : skillObj.level;
                     const progress = typeof skillObj === 'string' ? (index % 3 === 0 ? 80 : index % 3 === 1 ? 50 : 30) : skillObj.progress;
                     const status = typeof skillObj === 'string' ? 'Not tested' : skillObj.status;
-                    
+
                     let desc = (typeof skillObj === 'object' && skillObj.description) ? skillObj.description : 'Custom skill manually added to profile.';
                     if ((!skillObj.description) && dbSkill) {
                         if (level === 'Advanced') desc = dbSkill.advanced_criteria;
@@ -147,7 +151,7 @@ export const Assessment = () => {
                         components: (typeof skillObj === 'object' && skillObj.components) ? skillObj.components : (dbSkill?.key_components || [])
                     };
                 });
-                
+
                 setSkills(formattedUserSkills);
 
                 // If verifying a specific skill, find its metadata
@@ -159,7 +163,7 @@ export const Assessment = () => {
                         name: activeSkillName,
                         category: category
                     });
-                    
+
                     if (category === 'Soft') {
                         setEvaluationData(getShortEvaluationForSkill(activeSkillName, category));
                         setSubmissionMode('text'); // Default to text for soft skills
@@ -167,7 +171,7 @@ export const Assessment = () => {
                         setEvaluationData(getEvaluationForSkill(activeSkillName, category));
                         setSubmissionMode('quiz'); // Default to quiz for technical skills
                     }
-                    
+
                     setQuizLoading(true);
                     fetch(`http://127.0.0.1:8000/api/assessment/quiz-questions?skill_name=${encodeURIComponent(activeSkillName)}&category=${encodeURIComponent(isSoftSkill ? 'Soft' : category)}`)
                         .then(res => res.json())
@@ -195,9 +199,9 @@ export const Assessment = () => {
             const res = await fetch(`http://localhost:8000/api/user/profile?email=${encodeURIComponent(user.email)}`);
             if (!res.ok) throw new Error("Could not fetch profile");
             const profileData = await res.json();
-            
+
             profileData.skills = updatedSkillNames;
-            
+
             await fetch('http://127.0.0.1:8000/api/user/profile', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -248,7 +252,7 @@ export const Assessment = () => {
         const selectedOption = activeShortTest.questionObj.options[shortTestSelection];
 
         let newSkillsList = [...skills];
-        
+
         let dbMatch = null;
         if (category !== 'Soft') {
             dbMatch = dbSkillsList.find(s => s.skill_name.toLowerCase() === name.toLowerCase());
@@ -257,10 +261,10 @@ export const Assessment = () => {
         // Canonical name — always the human-readable skill name, used as the key everywhere
         const canonicalName = dbMatch ? dbMatch.skill_name : name;
 
-        let desc = category === 'Soft' 
-            ? `Soft skill evaluated via AI case-study.` 
+        let desc = category === 'Soft'
+            ? `Soft skill evaluated via AI case-study.`
             : 'Technical skill assessed via AI placement test.';
-            
+
         if (dbMatch) {
             if (selectedOption.level === 'Advanced') desc = dbMatch.advanced_criteria;
             else if (selectedOption.level === 'Intermediate') desc = dbMatch.intermediate_criteria;
@@ -276,7 +280,7 @@ export const Assessment = () => {
             description: desc,
             components: dbMatch && dbMatch.key_components ? dbMatch.key_components : []
         };
-        
+
         newSkillsList = newSkillsList.filter(s => s.name.toLowerCase() !== name.toLowerCase());
         newSkillsList = [skillToAdd, ...newSkillsList];
 
@@ -355,11 +359,26 @@ export const Assessment = () => {
                 body: JSON.stringify(payload)
             });
             const rubricData = await res.json();
-            
+
             // 2. Submit Case Study
+            const structuredCaseStudyText = `Problem Understanding:
+${caseStudyAnswers.problem_understanding}
+
+Root Cause / Challenge Analysis:
+${caseStudyAnswers.root_cause}
+
+Proposed Technical Solution:
+${caseStudyAnswers.proposed_solution}
+
+Implementation Steps:
+${caseStudyAnswers.implementation_steps}
+
+Testing, Edge Cases, and Improvements:
+${caseStudyAnswers.testing_edge_cases}`;
+
             const formData = new FormData();
             formData.append('skill_name', activeTechSkill);
-            formData.append('case_study_text', caseStudyText);
+            formData.append('case_study_text', structuredCaseStudyText);
             if (caseStudyFile) {
                 formData.append('file', caseStudyFile);
             }
@@ -410,7 +429,7 @@ export const Assessment = () => {
 
             newSkillsList = newSkillsList.filter(s => s.name.toLowerCase() !== activeTechSkill.toLowerCase());
             newSkillsList = [skillToAdd, ...newSkillsList];
-            
+
             setSkills(newSkillsList);
             await saveSkillsToProfile(newSkillsList.map(s => ({
                 name: s.name, level: s.level, progress: s.progress, status: s.status,
@@ -471,7 +490,7 @@ export const Assessment = () => {
         if (!userMajor) return true;          // if no major set, show all (shouldn't happen)
         if (!skill.major) return true;         // if skill has no major, keep it
         return skill.major.trim().toLowerCase().includes(userMajor.trim().toLowerCase()) ||
-               userMajor.trim().toLowerCase().includes(skill.major.trim().toLowerCase());
+            userMajor.trim().toLowerCase().includes(skill.major.trim().toLowerCase());
     });
     console.log("[Assessment] availableSkills count:", availableSkills.length);
 
@@ -483,7 +502,7 @@ export const Assessment = () => {
         unevaluatedSoftSkills.every(ss => softSkillAnswers[ss] !== undefined);
 
     // --- VOICE RECORDING LOGIC ---
-    const startRecording = async (index) => {
+    const startSoftRecording = async (index) => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const recorder = new MediaRecorder(stream);
@@ -517,7 +536,7 @@ export const Assessment = () => {
         }
     };
 
-    const stopRecording = (index) => {
+    const stopSoftRecording = (index) => {
         const recorder = mediaRecorders[index];
         if (recorder && recorder.state !== 'inactive') {
             recorder.stop();
@@ -640,20 +659,20 @@ export const Assessment = () => {
         setIsSubmitting(true);
         try {
             let data;
-            
+
             if (skillDetails?.category === 'Soft') {
                 if (submissionMode === 'voice') {
                     // Multi-Voice Submission
                     const formData = new FormData();
                     formData.append('email', user.email);
                     formData.append('skill_name', activeSkillName);
-                    
+
                     const keywords = skillDetails.scenarios.map(s => s.keywords);
                     formData.append('expected_keywords_json', JSON.stringify(keywords));
-                    
+
                     softRecordings.forEach((rec, i) => {
                         if (rec.blob) {
-                            formData.append('files', rec.blob, `scenario_${i+1}.webm`);
+                            formData.append('files', rec.blob, `scenario_${i + 1}.webm`);
                         }
                     });
 
@@ -817,11 +836,11 @@ export const Assessment = () => {
                                     <h3 style={{ fontSize: '1.5rem', marginBottom: '1.5rem', color: 'var(--color-primary)' }}>
                                         {techResult ? 'Assessment Results' : techFlowActive ? `Skill Assessment: ${activeTechSkill}` : shortTestResult ? 'Assessment Complete' : activeShortTest ? `AI Assessment: ${activeShortTest.name}` : 'Add New Skills'}
                                     </h3>
-                                    
+
                                     {techResult ? (
                                         <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
-                                            <div style={{ 
-                                                width: '100%', maxWidth: '400px', margin: '0 auto', background: 'var(--color-bg-paper)', 
+                                            <div style={{
+                                                width: '100%', maxWidth: '400px', margin: '0 auto', background: 'var(--color-bg-paper)',
                                                 padding: '2.5rem 2rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)',
                                                 boxShadow: 'var(--shadow-sm)'
                                             }}>
@@ -835,7 +854,7 @@ export const Assessment = () => {
                                                 <div style={{ fontSize: '1.25rem', fontWeight: '600', color: 'var(--color-text)', marginBottom: '1.5rem' }}>
                                                     Combined: {techResult.percentage}%
                                                 </div>
-                                                
+
                                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem', textAlign: 'left' }}>
                                                     <div style={{ background: 'var(--color-bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}>
                                                         <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: '700', textTransform: 'uppercase', marginBottom: '0.25rem' }}>Rubric</div>
@@ -847,8 +866,8 @@ export const Assessment = () => {
                                                     </div>
                                                 </div>
 
-                                                <div style={{ 
-                                                    display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.5rem', 
+                                                <div style={{
+                                                    display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.5rem',
                                                     background: 'var(--color-white)', borderRadius: 'var(--radius-full)', border: '1px solid var(--color-border)',
                                                     fontWeight: '700', color: 'var(--color-text)', marginBottom: '1rem'
                                                 }}>
@@ -886,7 +905,7 @@ export const Assessment = () => {
                                                 <>
                                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                                                         <span style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', fontWeight: '600' }}>
-                                                            {currentTechIdx < techQuestions.length 
+                                                            {currentTechIdx < techQuestions.length
                                                                 ? `Rubric Question ${currentTechIdx + 1} of ${techQuestions.length}`
                                                                 : `Final Step: Case Study Evaluation`}
                                                         </span>
@@ -905,19 +924,19 @@ export const Assessment = () => {
 
                                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                                                 {techQuestions[currentTechIdx]?.options.map((option, idx) => (
-                                                                    <label 
-                                                                        key={idx} 
-                                                                        style={{ 
-                                                                            display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '1.25rem', 
-                                                                            borderRadius: 'var(--radius-sm)', border: techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text ? '2px solid var(--color-primary)' : '1px solid var(--color-border)', 
-                                                                            background: techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text ? 'rgba(59, 130, 246, 0.05)' : 'var(--color-white)', cursor: 'pointer', transition: 'all 0.2s' 
+                                                                    <label
+                                                                        key={idx}
+                                                                        style={{
+                                                                            display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '1.25rem',
+                                                                            borderRadius: 'var(--radius-sm)', border: techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
+                                                                            background: techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text ? 'rgba(59, 130, 246, 0.05)' : 'var(--color-white)', cursor: 'pointer', transition: 'all 0.2s'
                                                                         }}
                                                                     >
-                                                                        <input 
-                                                                            type="radio" 
+                                                                        <input
+                                                                            type="radio"
                                                                             name={`tech_option_${currentTechIdx}`}
                                                                             checked={techAnswers[techQuestions[currentTechIdx].question_number] === option.option_text}
-                                                                            onChange={() => setTechAnswers(prev => ({...prev, [techQuestions[currentTechIdx].question_number]: option.option_text}))}
+                                                                            onChange={() => setTechAnswers(prev => ({ ...prev, [techQuestions[currentTechIdx].question_number]: option.option_text }))}
                                                                             style={{ width: '1.1rem', height: '1.1rem', accentColor: 'var(--color-primary)' }}
                                                                         />
                                                                         <span style={{ fontSize: '1rem', color: 'var(--color-text)' }}>{option.option_text}</span>
@@ -936,22 +955,59 @@ export const Assessment = () => {
                                                                 </p>
                                                             </div>
 
-                                                            <textarea
-                                                                placeholder="Describe your technical approach and reasoning here..."
-                                                                value={caseStudyText}
-                                                                onChange={(e) => setCaseStudyText(e.target.value)}
-                                                                style={{ 
-                                                                    width: '100%', minHeight: '180px', padding: '1rem', borderRadius: 'var(--radius-md)', 
-                                                                    border: '1px solid var(--color-border)', fontSize: '1rem', lineHeight: 1.6,
-                                                                    resize: 'vertical'
-                                                                }}
-                                                            />
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                                                <div>
+                                                                    <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>1. Problem Understanding</label>
+                                                                    <textarea
+                                                                        placeholder="Explain what the problem is and why it matters."
+                                                                        value={caseStudyAnswers.problem_understanding}
+                                                                        onChange={(e) => setCaseStudyAnswers(prev => ({ ...prev, problem_understanding: e.target.value }))}
+                                                                        style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
+                                                                    />
+                                                                </div>
+                                                                <div>
+                                                                    <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>2. Root Cause / Challenge Analysis</label>
+                                                                    <textarea
+                                                                        placeholder="Explain the main technical cause or challenge in this scenario."
+                                                                        value={caseStudyAnswers.root_cause}
+                                                                        onChange={(e) => setCaseStudyAnswers(prev => ({ ...prev, root_cause: e.target.value }))}
+                                                                        style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
+                                                                    />
+                                                                </div>
+                                                                <div>
+                                                                    <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>3. Proposed Technical Solution</label>
+                                                                    <textarea
+                                                                        placeholder="Describe your main technical solution."
+                                                                        value={caseStudyAnswers.proposed_solution}
+                                                                        onChange={(e) => setCaseStudyAnswers(prev => ({ ...prev, proposed_solution: e.target.value }))}
+                                                                        style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
+                                                                    />
+                                                                </div>
+                                                                <div>
+                                                                    <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>4. Implementation Steps</label>
+                                                                    <textarea
+                                                                        placeholder="List the practical steps, workflow, or pseudo-code to implement your solution."
+                                                                        value={caseStudyAnswers.implementation_steps}
+                                                                        onChange={(e) => setCaseStudyAnswers(prev => ({ ...prev, implementation_steps: e.target.value }))}
+                                                                        style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
+                                                                    />
+                                                                </div>
+                                                                <div>
+                                                                    <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>5. Testing, Edge Cases, and Improvements</label>
+                                                                    <textarea
+                                                                        placeholder="Explain how you would test the solution and handle edge cases."
+                                                                        value={caseStudyAnswers.testing_edge_cases}
+                                                                        onChange={(e) => setCaseStudyAnswers(prev => ({ ...prev, testing_edge_cases: e.target.value }))}
+                                                                        style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
+                                                                    />
+                                                                </div>
+                                                            </div>
 
                                                             <div style={{ border: '1px dashed var(--color-border)', padding: '1.5rem', borderRadius: 'var(--radius-md)', textAlign: 'center', background: 'var(--color-white)' }}>
-                                                                <input 
-                                                                    type="file" 
-                                                                    id="caseStudyUpload" 
-                                                                    style={{ display: 'none' }} 
+                                                                <input
+                                                                    type="file"
+                                                                    id="caseStudyUpload"
+                                                                    style={{ display: 'none' }}
                                                                     onChange={(e) => setCaseStudyFile(e.target.files[0])}
                                                                 />
                                                                 <label htmlFor="caseStudyUpload" style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
@@ -966,23 +1022,23 @@ export const Assessment = () => {
                                                     )}
 
                                                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginTop: '1.5rem' }}>
-                                                        <Button 
-                                                            variant="outline" 
+                                                        <Button
+                                                            variant="outline"
                                                             onClick={() => setCurrentTechIdx(prev => Math.max(0, prev - 1))}
                                                             disabled={currentTechIdx === 0}
                                                         >
                                                             Previous
                                                         </Button>
-                                                        
+
                                                         {currentTechIdx === techQuestions.length ? (
-                                                            <Button 
+                                                            <Button
                                                                 onClick={submitTechnicalAssessment}
-                                                                disabled={!caseStudyText.trim() || techLoading}
+                                                                disabled={!caseStudyAnswers.problem_understanding.trim() || !caseStudyAnswers.root_cause.trim() || !caseStudyAnswers.proposed_solution.trim() || !caseStudyAnswers.implementation_steps.trim() || !caseStudyAnswers.testing_edge_cases.trim() || techLoading}
                                                             >
                                                                 {techLoading ? <Loader2 className="animate-spin" size={18} /> : 'Submit Full Assessment'}
                                                             </Button>
                                                         ) : (
-                                                            <Button 
+                                                            <Button
                                                                 onClick={() => setCurrentTechIdx(prev => prev + 1)}
                                                                 disabled={!techAnswers[techQuestions[currentTechIdx].question_number]}
                                                             >
@@ -1009,10 +1065,10 @@ export const Assessment = () => {
                                             </div>
                                             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginTop: '2rem' }}>
                                                 <Button variant="outline" onClick={() => { setShortTestResult(null); setIsModalOpen(false); }}>Close</Button>
-                                                <Button onClick={() => { 
-                                                    setShortTestResult(null); 
-                                                    setIsModalOpen(false); 
-                                                    navigate(`/assessment?skill=${encodeURIComponent(shortTestResult.name)}`); 
+                                                <Button onClick={() => {
+                                                    setShortTestResult(null);
+                                                    setIsModalOpen(false);
+                                                    navigate(`/assessment?skill=${encodeURIComponent(shortTestResult.name)}`);
                                                 }}>
                                                     Complete Full Assessment
                                                 </Button>
@@ -1025,20 +1081,20 @@ export const Assessment = () => {
                                                     {activeShortTest.questionObj.question}
                                                 </p>
                                             </div>
-                                            
+
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                                 {activeShortTest.questionObj.options.map((option, idx) => (
-                                                    <label 
-                                                        key={idx} 
-                                                        style={{ 
-                                                            display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '1.25rem', 
-                                                            borderRadius: 'var(--radius-sm)', border: shortTestSelection === idx ? '2px solid var(--color-primary)' : '1px solid var(--color-border)', 
-                                                            background: shortTestSelection === idx ? 'rgba(59, 130, 246, 0.05)' : 'var(--color-white)', cursor: 'pointer', transition: 'all 0.2s' 
+                                                    <label
+                                                        key={idx}
+                                                        style={{
+                                                            display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '1.25rem',
+                                                            borderRadius: 'var(--radius-sm)', border: shortTestSelection === idx ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
+                                                            background: shortTestSelection === idx ? 'rgba(59, 130, 246, 0.05)' : 'var(--color-white)', cursor: 'pointer', transition: 'all 0.2s'
                                                         }}
                                                     >
-                                                        <input 
-                                                            type="radio" 
-                                                            name="assessment_option" 
+                                                        <input
+                                                            type="radio"
+                                                            name="assessment_option"
                                                             checked={shortTestSelection === idx}
                                                             onChange={() => setShortTestSelection(idx)}
                                                             style={{ marginTop: '0.25rem', width: '1.1rem', height: '1.1rem', accentColor: 'var(--color-primary)' }}
@@ -1058,13 +1114,13 @@ export const Assessment = () => {
                                     ) : (
                                         <>
                                             <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
-                                                <button 
+                                                <button
                                                     onClick={() => setActiveTab('technical')}
                                                     style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: activeTab === 'technical' ? '2px solid var(--color-primary)' : '2px solid transparent', color: activeTab === 'technical' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer' }}
                                                 >
                                                     Technical Skills
                                                 </button>
-                                                <button 
+                                                <button
                                                     onClick={() => setActiveTab('soft')}
                                                     style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: activeTab === 'soft' ? '2px solid var(--color-primary)' : '2px solid transparent', color: activeTab === 'soft' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer' }}
                                                 >
@@ -1082,7 +1138,7 @@ export const Assessment = () => {
                                                                 <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', maxWidth: '400px', margin: '0 auto 1.5rem auto' }}>
                                                                     You must select an IT Specialization in your profile to access matched assessments.
                                                                 </p>
-                                                                <Button onClick={() => window.location.href='/profile'}>Update Profile Details</Button>
+                                                                <Button onClick={() => window.location.href = '/profile'}>Update Profile Details</Button>
                                                             </div>
                                                         ) : (
                                                             <>
@@ -1092,7 +1148,7 @@ export const Assessment = () => {
                                                                         <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--color-primary)', marginTop: '0.25rem' }}>{userMajor}</div>
                                                                     </div>
                                                                 </div>
-                                                                
+
                                                                 <div>
                                                                     <p style={{ fontSize: '0.95rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>Select a technical skill to begin the assessment flow.</p>
                                                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.85rem' }}>
@@ -1100,8 +1156,8 @@ export const Assessment = () => {
                                                                             const skillName = skill.skill_name || skill.name;
                                                                             const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === skillName.toLowerCase());
                                                                             return (
-                                                                                <button 
-                                                                                    key={skillName} 
+                                                                                <button
+                                                                                    key={skillName}
                                                                                     onClick={() => startTechnicalAssessment(skillName)}
                                                                                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '1rem', background: 'var(--color-white)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'border 0.2s' }}
                                                                                 >
@@ -1126,19 +1182,19 @@ export const Assessment = () => {
                                                             {SOFT_SKILLS.map(softSkill => {
                                                                 const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === softSkill.toLowerCase());
                                                                 return (
-                                                                    <button 
-                                                                        key={softSkill} 
+                                                                    <button
+                                                                        key={softSkill}
                                                                         onClick={() => {
                                                                             setIsModalOpen(false);
                                                                             navigate(`/assessment?skill=${encodeURIComponent(softSkill)}`);
                                                                         }}
-                                                                        style={{ 
-                                                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', 
-                                                                            gap: '0.75rem', padding: '1.25rem', 
-                                                                            background: isAlreadyOwned ? 'rgba(0,0,0,0.03)' : 'var(--color-white)', 
-                                                                            borderRadius: 'var(--radius-md)', 
-                                                                            border: '1px solid var(--color-border)', 
-                                                                            cursor: 'pointer', textAlign: 'left', 
+                                                                        style={{
+                                                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                                                            gap: '0.75rem', padding: '1.25rem',
+                                                                            background: isAlreadyOwned ? 'rgba(0,0,0,0.03)' : 'var(--color-white)',
+                                                                            borderRadius: 'var(--radius-md)',
+                                                                            border: '1px solid var(--color-border)',
+                                                                            cursor: 'pointer', textAlign: 'left',
                                                                             width: '100%', transition: 'all 0.2s',
                                                                             boxShadow: isAlreadyOwned ? 'none' : '0 2px 4px rgba(0,0,0,0.04)'
                                                                         }}
@@ -1169,88 +1225,88 @@ export const Assessment = () => {
                         )}
 
                         <div className="jobs-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-                                {skills.map((skill, index) => (
-                                    <div key={`${skill.name}-${index}`} className="job-card animate-fade-in" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
-                                            <div>
-                                                <h4 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--color-primary)', marginBottom: '0.25rem' }}>{skill.name}</h4>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                                                    <span className="match-badge" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
-                                                        {skill.level}
-                                                    </span>
-                                                    <span className={`status ${skill.status === 'Verified' ? 'verified' : (skill.status === 'Pending' ? 'pending' : 'unverified')}`} style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                                        {skill.status === 'Verified' ? <CheckCircle2 size={14} className="check-icon" /> : <Clock size={14} style={{ color: skill.status === 'Pending' ? '#F59E0B' : 'var(--color-text-muted)' }} />}
-                                                        {skill.status}
-                                                    </span>
-                                                </div>
+                            {skills.map((skill, index) => (
+                                <div key={`${skill.name}-${index}`} className="job-card animate-fade-in" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+                                        <div>
+                                            <h4 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--color-primary)', marginBottom: '0.25rem' }}>{skill.name}</h4>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                                                <span className="match-badge" style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
+                                                    {skill.level}
+                                                </span>
+                                                <span className={`status ${skill.status === 'Verified' ? 'verified' : (skill.status === 'Pending' ? 'pending' : 'unverified')}`} style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                                    {skill.status === 'Verified' ? <CheckCircle2 size={14} className="check-icon" /> : <Clock size={14} style={{ color: skill.status === 'Pending' ? '#F59E0B' : 'var(--color-text-muted)' }} />}
+                                                    {skill.status}
+                                                </span>
                                             </div>
-                                            <button
-                                                onClick={() => handleRemoveSkill(skill.name)}
-                                                style={{ background: 'transparent', border: 'none', color: '#EF4444', cursor: 'pointer', padding: '0.5rem' }}
+                                        </div>
+                                        <button
+                                            onClick={() => handleRemoveSkill(skill.name)}
+                                            style={{ background: 'transparent', border: 'none', color: '#EF4444', cursor: 'pointer', padding: '0.5rem' }}
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
+                                    </div>
+
+                                    <div className="skill-item" style={{ marginBottom: '1rem' }}>
+                                        <div className="skill-info" style={{ marginBottom: '0.5rem' }}>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>AI Evaluation</span>
+                                            <span className="skill-percentage">{skill.progress}%</span>
+                                        </div>
+                                        <div className="progress-bar-bg">
+                                            <div
+                                                className={`progress-bar-fill ${skill.status === 'Verified' ? 'verified' : 'unverified'}`}
+                                                style={{ width: `${skill.progress}%` }}
+                                            ></div>
+                                        </div>
+                                    </div>
+
+                                    <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                        {skill.status === 'Verified' && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--color-accent)', fontSize: '0.875rem', fontWeight: '600', width: '100%', justifyContent: 'center', padding: '0.5rem', border: '1px dashed var(--color-accent)', borderRadius: 'var(--radius-md)' }}>
+                                                <CheckCircle2 size={16} /> Strongly Verified
+                                            </div>
+                                        )}
+                                        {skill.status === 'Not tested' ? (
+                                            <Button
+                                                variant="outline"
+                                                className="btn-full"
+                                                style={{ fontSize: '0.8125rem' }}
+                                                onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}
                                             >
-                                                <Trash2 size={18} />
-                                            </button>
-                                        </div>
-
-                                        <div className="skill-item" style={{ marginBottom: '1rem' }}>
-                                            <div className="skill-info" style={{ marginBottom: '0.5rem' }}>
-                                                <span style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>AI Evaluation</span>
-                                                <span className="skill-percentage">{skill.progress}%</span>
-                                            </div>
-                                            <div className="progress-bar-bg">
-                                                <div
-                                                    className={`progress-bar-fill ${skill.status === 'Verified' ? 'verified' : 'unverified'}`}
-                                                    style={{ width: `${skill.progress}%` }}
-                                                ></div>
-                                            </div>
-                                        </div>
-
-                                        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                                            {skill.status === 'Verified' && (
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--color-accent)', fontSize: '0.875rem', fontWeight: '600', width: '100%', justifyContent: 'center', padding: '0.5rem', border: '1px dashed var(--color-accent)', borderRadius: 'var(--radius-md)' }}>
-                                                    <CheckCircle2 size={16} /> Strongly Verified
-                                                </div>
-                                            )}
-                                            {skill.status === 'Not tested' ? (
-                                                <Button 
-                                                    variant="outline" 
-                                                    className="btn-full" 
-                                                    style={{ fontSize: '0.8125rem' }}
+                                                {skill.category === 'Soft' ? 'Reassess' : 'Complete Assessment'}
+                                            </Button>
+                                        ) : (
+                                            <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
+                                                <Button
+                                                    variant="outline"
+                                                    style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem' }}
                                                     onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}
                                                 >
-                                                    {skill.category === 'Soft' ? 'Reassess' : 'Complete Assessment'}
+                                                    Reassess
                                                 </Button>
-                                            ) : (
-                                                <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
-                                                    <Button 
-                                                        variant="outline" 
-                                                        style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem' }}
-                                                        onClick={() => navigate(`/assessment?skill=${encodeURIComponent(skill.name)}`)}
+                                                {skill.category !== 'Soft' && (
+                                                    <Button
+                                                        variant="outline"
+                                                        style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem', opacity: 0.6, cursor: 'not-allowed' }}
+                                                        onClick={() => { }}
+                                                        disabled
                                                     >
-                                                        Reassess
+                                                        Show Matching
                                                     </Button>
-                                                    {skill.category !== 'Soft' && (
-                                                        <Button 
-                                                            variant="outline" 
-                                                            style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem', opacity: 0.6, cursor: 'not-allowed' }}
-                                                            onClick={() => {}}
-                                                            disabled
-                                                        >
-                                                            Show Matching
-                                                        </Button>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
-                                ))}
-                                {skills.length === 0 && (
-                                    <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '4rem', background: 'var(--color-white)', borderRadius: 'var(--radius-xl)', border: '1px dashed var(--color-border)' }}>
-                                        <p style={{ color: 'var(--color-text-muted)', fontSize: '1.125rem' }}>No skills selected for assessment yet.</p>
-                                        <Button onClick={() => setIsModalOpen(true)} style={{ marginTop: '1.5rem' }}>+ Add Your First Skill</Button>
-                                    </div>
-                                )}
-                            </div>
+                                </div>
+                            ))}
+                            {skills.length === 0 && (
+                                <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '4rem', background: 'var(--color-white)', borderRadius: 'var(--radius-xl)', border: '1px dashed var(--color-border)' }}>
+                                    <p style={{ color: 'var(--color-text-muted)', fontSize: '1.125rem' }}>No skills selected for assessment yet.</p>
+                                    <Button onClick={() => setIsModalOpen(true)} style={{ marginTop: '1.5rem' }}>+ Add Your First Skill</Button>
+                                </div>
+                            )}
+                        </div>
                     </section>
                 </div>
                 <style>{`
@@ -1281,7 +1337,7 @@ export const Assessment = () => {
         <DashboardLayout user={user} onLogout={handleLogout}>
             <div className="dashboard-section" style={{ maxWidth: '1000px', margin: '0 auto' }}>
                 <div style={{ marginBottom: '1.5rem' }}>
-                    <button 
+                    <button
                         onClick={() => navigate('/assessment')}
                         style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: 0 }}
                     >
@@ -1313,7 +1369,7 @@ export const Assessment = () => {
                                 <p style={{ color: 'var(--color-text-muted)', maxWidth: '500px', margin: '0 auto 2.5rem auto', fontSize: '1.1rem' }}>
                                     You have already completed the evaluation for {activeSkillName} with a score of {activeSkillData.progress}%.
                                 </p>
-                                
+
                                 <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', alignItems: 'flex-start' }}>
                                     <Button variant="outline" onClick={() => setWantsToReassess(true)} style={{ padding: '0.75rem 2rem' }}>Reassess</Button>
                                     {!skillDetails?.isSoft && activeSkillData.category !== 'Soft' && (
@@ -1328,415 +1384,415 @@ export const Assessment = () => {
                     }
 
                     return !result ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '2rem' }}>
-                        {/* Task Area */}
-                        <div style={{ 
-                            background: 'var(--color-bg-paper)', 
-                            border: '1px solid var(--color-border)', 
-                            borderRadius: 'var(--radius-xl)',
-                            padding: '2rem',
-                            boxShadow: 'var(--shadow-sm)'
-                        }}>
-                            <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
-                                <button
-                                    onClick={() => setSubmissionMode('text')}
-                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'text' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'text' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
-                                >
-                                    Write Answer
-                                </button>
-                                <button
-                                    onClick={() => setSubmissionMode('voice')}
-                                    style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'voice' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'voice' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
-                                >
-                                    Voice Recording
-                                </button>
-                                {skillDetails.category !== 'Soft' && (
-                                    <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '2rem' }}>
+                            {/* Task Area */}
+                            <div style={{
+                                background: 'var(--color-bg-paper)',
+                                border: '1px solid var(--color-border)',
+                                borderRadius: 'var(--radius-xl)',
+                                padding: '2rem',
+                                boxShadow: 'var(--shadow-sm)'
+                            }}>
+                                <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
                                     <button
-                                        onClick={() => setSubmissionMode('quiz')}
-                                        style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'quiz' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'quiz' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                        onClick={() => setSubmissionMode('text')}
+                                        style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'text' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'text' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
                                     >
-                                        AI Quiz
+                                        Write Answer
                                     </button>
                                     <button
-                                        onClick={() => setSubmissionMode('upload')}
-                                        style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'upload' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'upload' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                        onClick={() => setSubmissionMode('voice')}
+                                        style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'voice' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'voice' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
                                     >
-                                        Upload Work Sample
+                                        Voice Recording
                                     </button>
-                                    </>
-                                )}
-                            </div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
-                                <div style={{ 
-                                    width: '40px', height: '40px', background: 'rgba(59, 130, 246, 0.1)', 
-                                    borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    color: 'var(--color-primary)'
-                                }}>
-                                    {submissionMode === 'voice' ? <Plus size={24} /> : (submissionMode === 'text' ? <FileText size={24} /> : <CheckCircle2 size={24} />)}
+                                    {skillDetails.category !== 'Soft' && (
+                                        <>
+                                            <button
+                                                onClick={() => setSubmissionMode('quiz')}
+                                                style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'quiz' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'quiz' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                            >
+                                                AI Quiz
+                                            </button>
+                                            <button
+                                                onClick={() => setSubmissionMode('upload')}
+                                                style={{ padding: '0.5rem 1rem', background: 'none', border: 'none', borderBottom: submissionMode === 'upload' ? '2px solid var(--color-primary)' : '2px solid transparent', color: submissionMode === 'upload' ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+                                            >
+                                                Upload Work Sample
+                                            </button>
+                                        </>
+                                    )}
                                 </div>
-                                <h3 style={{ margin: 0 }}>
-                                    {submissionMode === 'voice' ? 'Split Voice Assessment' : (submissionMode === 'text' ? 'Multi-Scenario Assessment' : 'AI Evaluation')}
-                                </h3>
-                            </div>
 
-                            {skillDetails.category === 'Soft' && evaluationData?.scenarios ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                                    {evaluationData.scenarios.map((scenario, idx) => (
-                                        <div key={idx} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-                                                <h4 style={{ margin: 0, fontSize: '1rem', color: 'var(--color-primary)' }}>Scenario {idx + 1}</h4>
-                                            </div>
-                                            <p style={{ margin: '0 0 1.25rem 0', fontWeight: 600, fontSize: '1.05rem', lineHeight: 1.5 }}>{scenario.question}</p>
-                                            
-                                            {submissionMode === 'text' ? (
-                                                <textarea 
-                                                    className="form-control"
-                                                    placeholder="Describe your reasoning and exact response..."
-                                                    style={{ minHeight: '120px', width: '100%', padding: '1rem', fontSize: '0.95rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', resize: 'vertical' }}
-                                                    value={softMultiAnswers[idx]}
-                                                    onChange={(e) => {
-                                                        const next = [...softMultiAnswers];
-                                                        next[idx] = e.target.value;
-                                                        setSoftMultiAnswers(next);
-                                                    }}
-                                                />
-                                            ) : (
-                                                <div style={{ background: 'var(--color-white)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-                                                    {softRecordings[idx].status === 'idle' && (
-                                                        <Button 
-                                                            variant="primary" 
-                                                            onClick={() => startRecording(idx)}
-                                                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.25rem' }}
-                                                        >
-                                                            <Plus size={18} /> Record Answer
-                                                        </Button>
-                                                    )}
-                                                    {softRecordings[idx].status === 'recording' && (
-                                                        <Button 
-                                                            variant="outline" 
-                                                            onClick={() => stopRecording(idx)}
-                                                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.25rem', borderColor: '#EF4444', color: '#EF4444' }}
-                                                        >
-                                                            <div className="pulse-red" style={{ width: '10px', height: '10px', background: '#EF4444', borderRadius: '50%' }} /> Stop
-                                                        </Button>
-                                                    )}
-                                                    {softRecordings[idx].status === 'recorded' && (
-                                                        <>
-                                                            <audio src={softRecordings[idx].url} controls style={{ height: '32px' }} />
-                                                            <button 
-                                                                onClick={() => deleteRecording(idx)}
-                                                                style={{ background: 'transparent', border: 'none', color: '#EF4444', cursor: 'pointer' }}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                                    <div style={{
+                                        width: '40px', height: '40px', background: 'rgba(59, 130, 246, 0.1)',
+                                        borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        color: 'var(--color-primary)'
+                                    }}>
+                                        {submissionMode === 'voice' ? <Plus size={24} /> : (submissionMode === 'text' ? <FileText size={24} /> : <CheckCircle2 size={24} />)}
+                                    </div>
+                                    <h3 style={{ margin: 0 }}>
+                                        {submissionMode === 'voice' ? 'Split Voice Assessment' : (submissionMode === 'text' ? 'Multi-Scenario Assessment' : 'AI Evaluation')}
+                                    </h3>
+                                </div>
+
+                                {skillDetails.category === 'Soft' && evaluationData?.scenarios ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                                        {evaluationData.scenarios.map((scenario, idx) => (
+                                            <div key={idx} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                                                    <h4 style={{ margin: 0, fontSize: '1rem', color: 'var(--color-primary)' }}>Scenario {idx + 1}</h4>
+                                                </div>
+                                                <p style={{ margin: '0 0 1.25rem 0', fontWeight: 600, fontSize: '1.05rem', lineHeight: 1.5 }}>{scenario.question}</p>
+
+                                                {submissionMode === 'text' ? (
+                                                    <textarea
+                                                        className="form-control"
+                                                        placeholder="Describe your reasoning and exact response..."
+                                                        style={{ minHeight: '120px', width: '100%', padding: '1rem', fontSize: '0.95rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', resize: 'vertical' }}
+                                                        value={softMultiAnswers[idx]}
+                                                        onChange={(e) => {
+                                                            const next = [...softMultiAnswers];
+                                                            next[idx] = e.target.value;
+                                                            setSoftMultiAnswers(next);
+                                                        }}
+                                                    />
+                                                ) : (
+                                                    <div style={{ background: 'var(--color-white)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+                                                        {softRecordings[idx].status === 'idle' && (
+                                                            <Button
+                                                                variant="primary"
+                                                                onClick={() => startSoftRecording(idx)}
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.25rem' }}
                                                             >
-                                                                <Trash2 size={18} />
-                                                            </button>
-                                                        </>
-                                                    )}
-                                                    <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>
-                                                        {softRecordings[idx].status === 'recording' ? 'Speaking...' : (softRecordings[idx].status === 'recorded' ? 'Captured' : 'Ready')}
-                                                    </span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : (
-                            <>
-                            {submissionMode !== 'quiz' && (
-                                <div style={{ marginBottom: '2rem' }}>
-                                    {evaluationData.researchImportance && (
-                                        <div style={{ background: 'rgba(59, 130, 246, 0.05)', padding: '1rem 1.25rem', borderRadius: '12px', marginBottom: '1rem', border: '1px solid rgba(59, 130, 246, 0.1)' }}>
-                                            <div style={{ fontWeight: 600, marginBottom: '0.35rem', color: 'var(--color-primary)' }}>Why this matters</div>
-                                            <div style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>{evaluationData.researchImportance}</div>
-                                        </div>
-                                    )}
-                                    {skillDetails?.isSoft && evaluationData?.allScenarios ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                            {evaluationData.allScenarios.map((scenario, idx) => (
-                                                <div key={idx} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
-                                                    <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>Scenario {idx + 1}</div>
-                                                    <p style={{ margin: 0, lineHeight: 1.6, fontWeight: 500, fontSize: '1.05rem', color: 'var(--color-text)' }}>{scenario.question}</p>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', marginBottom: '2rem', borderLeft: '4px solid var(--color-primary)' }}>
-                                            <p style={{ margin: 0, lineHeight: 1.6, fontWeight: 500, fontSize: '1.05rem', color: 'var(--color-text)' }}>{evaluationData.question}</p>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {submissionMode === 'quiz' ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                                    {quizLoading ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '3rem' }}>
-                                            <Loader2 className="animate-spin" size={32} color="var(--color-primary)" style={{ marginBottom: '1rem' }} />
-                                            <div style={{ color: 'var(--color-text-muted)' }}>Generating structured statements via AI...</div>
-                                        </div>
-                                    ) : (
-                                        quizQuestions.map((q, qIndex) => (
-                                            <div key={qIndex} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
-                                                <p style={{ margin: '0 0 1rem 0', fontWeight: 600, fontSize: '1.05rem', color: 'var(--color-text)' }}>
-                                                    {qIndex + 1}. {q}
-                                                </p>
-                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem' }}>
-                                                    {[
-                                                        { label: 'Strongly Agree', value: 10 },
-                                                        { label: 'Agree', value: 8 },
-                                                        { label: 'Neutral', value: 5 },
-                                                        { label: 'Disagree', value: 2 },
-                                                        { label: 'Strongly Disagree', value: 0 }
-                                                    ].map((opt, oIndex) => (
-                                                        <label key={oIndex} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.95rem' }}>
-                                                            <input 
-                                                                type="radio" 
-                                                                name={`question-${qIndex}`} 
-                                                                value={opt.value}
-                                                                checked={quizAnswers[qIndex] === opt.value}
-                                                                onChange={() => {
-                                                                    const newAns = [...quizAnswers];
-                                                                    newAns[qIndex] = opt.value;
-                                                                    setQuizAnswers(newAns);
-                                                                }}
-                                                            />
-                                                            {opt.label}
-                                                        </label>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            ) : submissionMode === 'text' ? (
-                                skillDetails?.isSoft && evaluationData?.allScenarios ? (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                        {evaluationData.allScenarios.map((_, idx) => (
-                                            <div key={idx} style={{ position: 'relative' }}>
-                                                <textarea 
-                                                    className="form-control"
-                                                    placeholder={`Write your detailed scenario-based roleplay answer for Scenario ${idx + 1} here. Be descriptive...`}
-                                                    style={{ 
-                                                        minHeight: '200px', width: '100%', padding: '1.25rem', fontFamily: 'system-ui, sans-serif', 
-                                                        fontSize: '1rem', lineHeight: 1.6, borderRadius: 'var(--radius-md)',
-                                                        border: '1px solid var(--color-border)', resize: 'vertical'
-                                                    }}
-                                                    value={multiAnswers[idx] || ''}
-                                                    onChange={(e) => setMultiAnswers(prev => ({...prev, [idx]: e.target.value}))}
-                                                />
-                                                <div style={{ 
-                                                    position: 'absolute', bottom: '1rem', right: '1.5rem', 
-                                                    color: 'var(--color-text-muted)', fontSize: '0.85rem'
-                                                }}>
-                                                    {(multiAnswers[idx] || '').length} characters
-                                                </div>
+                                                                <Plus size={18} /> Record Answer
+                                                            </Button>
+                                                        )}
+                                                        {softRecordings[idx].status === 'recording' && (
+                                                            <Button
+                                                                variant="outline"
+                                                                onClick={() => stopSoftRecording(idx)}
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.25rem', borderColor: '#EF4444', color: '#EF4444' }}
+                                                            >
+                                                                <div className="pulse-red" style={{ width: '10px', height: '10px', background: '#EF4444', borderRadius: '50%' }} /> Stop
+                                                            </Button>
+                                                        )}
+                                                        {softRecordings[idx].status === 'recorded' && (
+                                                            <>
+                                                                <audio src={softRecordings[idx].url} controls style={{ height: '32px' }} />
+                                                                <button
+                                                                    onClick={() => deleteRecording(idx)}
+                                                                    style={{ background: 'transparent', border: 'none', color: '#EF4444', cursor: 'pointer' }}
+                                                                >
+                                                                    <Trash2 size={18} />
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                        <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>
+                                                            {softRecordings[idx].status === 'recording' ? 'Speaking...' : (softRecordings[idx].status === 'recorded' ? 'Captured' : 'Ready')}
+                                                        </span>
+                                                    </div>
+                                                )}
                                             </div>
                                         ))}
                                     </div>
                                 ) : (
-                                    <div style={{ position: 'relative' }}>
-                                        <textarea 
-                                            className="form-control"
-                                            placeholder="Write your detailed, scenario-based answer here. Assume you are communicating with senior engineers..."
-                                            style={{ 
-                                                minHeight: '250px', width: '100%', padding: '1.25rem', fontFamily: 'system-ui, sans-serif', 
-                                                fontSize: '1rem', lineHeight: 1.6, borderRadius: 'var(--radius-md)',
-                                                border: '1px solid var(--color-border)', resize: 'vertical'
-                                            }}
-                                            value={submission}
-                                            onChange={(e) => setSubmission(e.target.value)}
-                                        />
-                                        <div style={{ 
-                                            position: 'absolute', bottom: '1rem', right: '1.5rem', 
-                                            color: 'var(--color-text-muted)', fontSize: '0.85rem'
-                                        }}>
-                                            {submission.length} characters
-                                        </div>
-                                    </div>
-                                )
-                            ) : submissionMode === 'voice' ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                    {skillDetails?.isSoft && evaluationData?.allScenarios ? (
-                                        evaluationData.allScenarios.map((_, idx) => (
-                                            <div key={idx} style={{ padding: '1.5rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
-                                                <div style={{ fontWeight: 600, marginBottom: '1rem' }}>Record Scenario {idx + 1}</div>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                                    <Button 
-                                                        variant={isRecording && recordingIndex === idx ? "danger" : "outline"}
-                                                        onClick={() => isRecording && recordingIndex === idx ? stopRecording() : startRecording(idx)}
-                                                        disabled={isRecording && recordingIndex !== null && recordingIndex !== idx}
-                                                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '200px' }}
-                                                    >
-                                                        {isRecording && recordingIndex === idx ? <><Square size={16} /> Stop Record</> : <><Mic size={16} /> Record Voice</>}
-                                                    </Button>
-                                                    
-                                                    {multiAudioURLs[idx] && (
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
-                                                            <audio src={multiAudioURLs[idx]} controls style={{ height: '36px', flex: 1 }} />
-                                                            <button onClick={() => setMultiAudioURLs(prev => ({...prev, [idx]: null}))} style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '0.5rem' }}>
-                                                                <Trash2 size={16} />
-                                                            </button>
-                                                        </div>
-                                                    )}
-                                                </div>
+                                    <>
+                                        {submissionMode !== 'quiz' && (
+                                            <div style={{ marginBottom: '2rem' }}>
+                                                {evaluationData.researchImportance && (
+                                                    <div style={{ background: 'rgba(59, 130, 246, 0.05)', padding: '1rem 1.25rem', borderRadius: '12px', marginBottom: '1rem', border: '1px solid rgba(59, 130, 246, 0.1)' }}>
+                                                        <div style={{ fontWeight: 600, marginBottom: '0.35rem', color: 'var(--color-primary)' }}>Why this matters</div>
+                                                        <div style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>{evaluationData.researchImportance}</div>
+                                                    </div>
+                                                )}
+                                                {skillDetails?.isSoft && evaluationData?.allScenarios ? (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                                        {evaluationData.allScenarios.map((scenario, idx) => (
+                                                            <div key={idx} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
+                                                                <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>Scenario {idx + 1}</div>
+                                                                <p style={{ margin: 0, lineHeight: 1.6, fontWeight: 500, fontSize: '1.05rem', color: 'var(--color-text)' }}>{scenario.question}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', marginBottom: '2rem', borderLeft: '4px solid var(--color-primary)' }}>
+                                                        <p style={{ margin: 0, lineHeight: 1.6, fontWeight: 500, fontSize: '1.05rem', color: 'var(--color-text)' }}>{evaluationData.question}</p>
+                                                    </div>
+                                                )}
                                             </div>
-                                        ))
-                                    ) : (
-                                        <div style={{ padding: '1.5rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
-                                            <div style={{ fontWeight: 600, marginBottom: '1rem' }}>Record Audio Answer</div>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                                <Button 
-                                                    variant={isRecording && recordingIndex === null ? "danger" : "outline"}
-                                                    onClick={() => isRecording && recordingIndex === null ? stopRecording() : startRecording()}
-                                                    disabled={isRecording && recordingIndex !== null}
-                                                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '200px' }}
-                                                >
-                                                    {isRecording && recordingIndex === null ? <><Square size={16} /> Stop Record</> : <><Mic size={16} /> Record Voice</>}
-                                                </Button>
-                                                
-                                                {audioURL && (
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
-                                                        <audio src={audioURL} controls style={{ height: '36px', flex: 1 }} />
-                                                        <button onClick={() => setAudioURL(null)} style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '0.5rem' }}>
-                                                            <Trash2 size={16} />
+                                        )}
+
+                                        {submissionMode === 'quiz' ? (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                                                {quizLoading ? (
+                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '3rem' }}>
+                                                        <Loader2 className="animate-spin" size={32} color="var(--color-primary)" style={{ marginBottom: '1rem' }} />
+                                                        <div style={{ color: 'var(--color-text-muted)' }}>Generating structured statements via AI...</div>
+                                                    </div>
+                                                ) : (
+                                                    quizQuestions.map((q, qIndex) => (
+                                                        <div key={qIndex} style={{ background: 'rgba(0,0,0,0.02)', padding: '1.5rem', borderRadius: '12px', borderLeft: '4px solid var(--color-primary)' }}>
+                                                            <p style={{ margin: '0 0 1rem 0', fontWeight: 600, fontSize: '1.05rem', color: 'var(--color-text)' }}>
+                                                                {qIndex + 1}. {q}
+                                                            </p>
+                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem' }}>
+                                                                {[
+                                                                    { label: 'Strongly Agree', value: 10 },
+                                                                    { label: 'Agree', value: 8 },
+                                                                    { label: 'Neutral', value: 5 },
+                                                                    { label: 'Disagree', value: 2 },
+                                                                    { label: 'Strongly Disagree', value: 0 }
+                                                                ].map((opt, oIndex) => (
+                                                                    <label key={oIndex} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.95rem' }}>
+                                                                        <input
+                                                                            type="radio"
+                                                                            name={`question-${qIndex}`}
+                                                                            value={opt.value}
+                                                                            checked={quizAnswers[qIndex] === opt.value}
+                                                                            onChange={() => {
+                                                                                const newAns = [...quizAnswers];
+                                                                                newAns[qIndex] = opt.value;
+                                                                                setQuizAnswers(newAns);
+                                                                            }}
+                                                                        />
+                                                                        {opt.label}
+                                                                    </label>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </div>
+                                        ) : submissionMode === 'text' ? (
+                                            skillDetails?.isSoft && evaluationData?.allScenarios ? (
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                                    {evaluationData.allScenarios.map((_, idx) => (
+                                                        <div key={idx} style={{ position: 'relative' }}>
+                                                            <textarea
+                                                                className="form-control"
+                                                                placeholder={`Write your detailed scenario-based roleplay answer for Scenario ${idx + 1} here. Be descriptive...`}
+                                                                style={{
+                                                                    minHeight: '200px', width: '100%', padding: '1.25rem', fontFamily: 'system-ui, sans-serif',
+                                                                    fontSize: '1rem', lineHeight: 1.6, borderRadius: 'var(--radius-md)',
+                                                                    border: '1px solid var(--color-border)', resize: 'vertical'
+                                                                }}
+                                                                value={multiAnswers[idx] || ''}
+                                                                onChange={(e) => setMultiAnswers(prev => ({ ...prev, [idx]: e.target.value }))}
+                                                            />
+                                                            <div style={{
+                                                                position: 'absolute', bottom: '1rem', right: '1.5rem',
+                                                                color: 'var(--color-text-muted)', fontSize: '0.85rem'
+                                                            }}>
+                                                                {(multiAnswers[idx] || '').length} characters
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div style={{ position: 'relative' }}>
+                                                    <textarea
+                                                        className="form-control"
+                                                        placeholder="Write your detailed, scenario-based answer here. Assume you are communicating with senior engineers..."
+                                                        style={{
+                                                            minHeight: '250px', width: '100%', padding: '1.25rem', fontFamily: 'system-ui, sans-serif',
+                                                            fontSize: '1rem', lineHeight: 1.6, borderRadius: 'var(--radius-md)',
+                                                            border: '1px solid var(--color-border)', resize: 'vertical'
+                                                        }}
+                                                        value={submission}
+                                                        onChange={(e) => setSubmission(e.target.value)}
+                                                    />
+                                                    <div style={{
+                                                        position: 'absolute', bottom: '1rem', right: '1.5rem',
+                                                        color: 'var(--color-text-muted)', fontSize: '0.85rem'
+                                                    }}>
+                                                        {submission.length} characters
+                                                    </div>
+                                                </div>
+                                            )
+                                        ) : submissionMode === 'voice' ? (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                                {skillDetails?.isSoft && evaluationData?.allScenarios ? (
+                                                    evaluationData.allScenarios.map((_, idx) => (
+                                                        <div key={idx} style={{ padding: '1.5rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+                                                            <div style={{ fontWeight: 600, marginBottom: '1rem' }}>Record Scenario {idx + 1}</div>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                                                <Button
+                                                                    variant={isRecording && recordingIndex === idx ? "danger" : "outline"}
+                                                                    onClick={() => isRecording && recordingIndex === idx ? stopRecording() : startRecording(idx)}
+                                                                    disabled={isRecording && recordingIndex !== null && recordingIndex !== idx}
+                                                                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '200px' }}
+                                                                >
+                                                                    {isRecording && recordingIndex === idx ? <><Square size={16} /> Stop Record</> : <><Mic size={16} /> Record Voice</>}
+                                                                </Button>
+
+                                                                {multiAudioURLs[idx] && (
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
+                                                                        <audio src={multiAudioURLs[idx]} controls style={{ height: '36px', flex: 1 }} />
+                                                                        <button onClick={() => setMultiAudioURLs(prev => ({ ...prev, [idx]: null }))} style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '0.5rem' }}>
+                                                                            <Trash2 size={16} />
+                                                                        </button>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <div style={{ padding: '1.5rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+                                                        <div style={{ fontWeight: 600, marginBottom: '1rem' }}>Record Audio Answer</div>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                                            <Button
+                                                                variant={isRecording && recordingIndex === null ? "danger" : "outline"}
+                                                                onClick={() => isRecording && recordingIndex === null ? stopRecording() : startRecording()}
+                                                                disabled={isRecording && recordingIndex !== null}
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '200px' }}
+                                                            >
+                                                                {isRecording && recordingIndex === null ? <><Square size={16} /> Stop Record</> : <><Mic size={16} /> Record Voice</>}
+                                                            </Button>
+
+                                                            {audioURL && (
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
+                                                                    <audio src={audioURL} controls style={{ height: '36px', flex: 1 }} />
+                                                                    <button onClick={() => setAudioURL(null)} style={{ background: 'none', border: 'none', color: 'var(--color-error)', cursor: 'pointer', padding: '0.5rem' }}>
+                                                                        <Trash2 size={16} />
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div style={{ marginTop: '1rem', padding: '2rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '2px dashed var(--color-border)', textAlign: 'center' }}>
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+                                                    <div style={{ background: 'var(--color-white)', padding: '1rem', borderRadius: '50%', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
+                                                        <UploadCloud size={32} color="var(--color-primary)" />
+                                                    </div>
+                                                    <h4 style={{ margin: 0 }}>Choose a file to upload</h4>
+                                                    <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.9rem', maxWidth: '300px' }}>
+                                                        Supported: PDF, JS, PY, TSX, HTML, CSS, CPP (Max 5MB)
+                                                    </p>
+
+                                                    <input
+                                                        type="file"
+                                                        id="file-upload"
+                                                        style={{ display: 'none' }}
+                                                        onChange={(e) => {
+                                                            if (e.target.files && e.target.files[0]) setSelectedFile(e.target.files[0]);
+                                                        }}
+                                                        accept=".pdf,.js,.py,.jsx,.ts,.tsx,.java,.cpp,.cs,.html,.css"
+                                                    />
+                                                    <label htmlFor="file-upload" style={{ marginTop: '0.5rem', display: 'inline-block', padding: '0.75rem 1.75rem', background: 'var(--color-white)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600, color: 'var(--color-text)', transition: 'all 0.2s', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
+                                                        onMouseOver={(e) => e.currentTarget.style.background = 'var(--color-bg-paper)'}
+                                                        onMouseOut={(e) => e.currentTarget.style.background = 'var(--color-white)'}>
+                                                        Browse Files
+                                                    </label>
+                                                </div>
+
+                                                {selectedFile && (
+                                                    <div style={{ marginTop: '2rem', padding: '1rem', background: 'var(--color-white)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                                            <FileText size={20} color="var(--color-primary)" />
+                                                            <div style={{ textAlign: 'left' }}>
+                                                                <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--color-text)' }}>{selectedFile.name}</div>
+                                                                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{(selectedFile.size / 1024).toFixed(1)} KB</div>
+                                                            </div>
+                                                        </div>
+                                                        <button onClick={() => setSelectedFile(null)} style={{ background: 'transparent', border: 'none', padding: '0.5rem', cursor: 'pointer', color: 'var(--color-error)' }}>
+                                                            <Trash2 size={18} />
                                                         </button>
                                                     </div>
                                                 )}
                                             </div>
-                                        </div>
-                                    )}
-                                </div>
-                            ) : (
-                                <div style={{ marginTop: '1rem', padding: '2rem', background: 'rgba(0,0,0,0.02)', borderRadius: 'var(--radius-md)', border: '2px dashed var(--color-border)', textAlign: 'center' }}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
-                                        <div style={{ background: 'var(--color-white)', padding: '1rem', borderRadius: '50%', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
-                                            <UploadCloud size={32} color="var(--color-primary)" />
-                                        </div>
-                                        <h4 style={{ margin: 0 }}>Choose a file to upload</h4>
-                                        <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.9rem', maxWidth: '300px' }}>
-                                            Supported: PDF, JS, PY, TSX, HTML, CSS, CPP (Max 5MB)
-                                        </p>
-                                        
-                                        <input 
-                                            type="file" 
-                                            id="file-upload" 
-                                            style={{ display: 'none' }} 
-                                            onChange={(e) => {
-                                                if (e.target.files && e.target.files[0]) setSelectedFile(e.target.files[0]);
-                                            }}
-                                            accept=".pdf,.js,.py,.jsx,.ts,.tsx,.java,.cpp,.cs,.html,.css"
-                                        />
-                                        <label htmlFor="file-upload" style={{ marginTop: '0.5rem', display: 'inline-block', padding: '0.75rem 1.75rem', background: 'var(--color-white)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600, color: 'var(--color-text)', transition: 'all 0.2s', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}
-                                               onMouseOver={(e) => e.currentTarget.style.background = 'var(--color-bg-paper)'}
-                                               onMouseOut={(e) => e.currentTarget.style.background = 'var(--color-white)'}>
-                                            Browse Files
-                                        </label>
-                                    </div>
-                                    
-                                    {selectedFile && (
-                                        <div style={{ marginTop: '2rem', padding: '1rem', background: 'var(--color-white)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                                <FileText size={20} color="var(--color-primary)" />
-                                                <div style={{ textAlign: 'left' }}>
-                                                    <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--color-text)' }}>{selectedFile.name}</div>
-                                                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{(selectedFile.size / 1024).toFixed(1)} KB</div>
-                                                </div>
-                                            </div>
-                                            <button onClick={() => setSelectedFile(null)} style={{ background: 'transparent', border: 'none', padding: '0.5rem', cursor: 'pointer', color: 'var(--color-error)' }}>
-                                                <Trash2 size={18} />
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                            </>
-                            )}
+                                        )}
+                                    </>
+                                )}
 
-                            <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                {submissionMode === 'quiz' && !quizLoading ? (
-                                    <div style={{ fontSize: '1.1rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
-                                        {quizAnswers.filter(a => a !== null).length} / {quizQuestions.length} answered
-                                    </div>
-                                ) : (skillDetails.category === 'Soft' && submissionMode === 'voice') ? (
-                                    <div style={{ fontSize: '1.1rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
-                                        {softRecordings.filter(r => r.blob).length} / 3 recorded
-                                    </div>
-                                ) : <div />}
-                                
-                                <Button 
-                                    className="btn-primary" 
-                                    style={{ padding: '0.75rem 2.5rem' }} 
-                                    onClick={handleSubmitAssessment} 
-                                    disabled={
-                                        (submissionMode === 'quiz' && (quizLoading || quizAnswers.some(a => a === null))) || 
-                                        (submissionMode === 'text' && (skillDetails.category === 'Soft' ? softMultiAnswers.some(a => !a.trim()) : !submission.trim())) || 
-                                        (submissionMode === 'voice' && softRecordings.some(r => !r.blob)) ||
-                                        (submissionMode === 'upload' && !selectedFile) || 
-                                        isSubmitting
-                                    }
-                                >
-                                    {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> Processing...</> : 'Submit Assessment'}
-                                </Button>
+                                <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    {submissionMode === 'quiz' && !quizLoading ? (
+                                        <div style={{ fontSize: '1.1rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                                            {quizAnswers.filter(a => a !== null).length} / {quizQuestions.length} answered
+                                        </div>
+                                    ) : (skillDetails.category === 'Soft' && submissionMode === 'voice') ? (
+                                        <div style={{ fontSize: '1.1rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                                            {softRecordings.filter(r => r.blob).length} / 3 recorded
+                                        </div>
+                                    ) : <div />}
+
+                                    <Button
+                                        className="btn-primary"
+                                        style={{ padding: '0.75rem 2.5rem' }}
+                                        onClick={handleSubmitAssessment}
+                                        disabled={
+                                            (submissionMode === 'quiz' && (quizLoading || quizAnswers.some(a => a === null))) ||
+                                            (submissionMode === 'text' && (skillDetails.category === 'Soft' ? softMultiAnswers.some(a => !a.trim()) : !submission.trim())) ||
+                                            (submissionMode === 'voice' && softRecordings.some(r => !r.blob)) ||
+                                            (submissionMode === 'upload' && !selectedFile) ||
+                                            isSubmitting
+                                        }
+                                    >
+                                        {isSubmitting ? <><Loader2 className="animate-spin" size={18} /> Processing...</> : 'Submit Assessment'}
+                                    </Button>
+                                </div>
+                            </div>
+
+                            {/* Sidebar Info */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                <div style={{ background: 'var(--color-bg-paper)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', padding: '1.5rem' }}>
+                                    <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: 0 }}>
+                                        <Sparkles size={18} color="#eab308" /> Evaluation Criteria
+                                    </h4>
+                                    <ul style={{ paddingLeft: '1.25rem', color: 'var(--color-text-muted)', fontSize: '0.875rem', lineHeight: 1.6 }}>
+                                        <li>Provide real-world context</li>
+                                        <li>Use proper technical vocabulary</li>
+                                        <li>Explain your complete flow</li>
+                                        <li>Minimum 150 characters expected</li>
+                                    </ul>
+                                </div>
+
+                                <div style={{ background: 'linear-gradient(135deg, var(--color-primary-dark), var(--color-primary))', border: 'none', borderRadius: 'var(--radius-xl)', padding: '1.5rem', color: 'white' }}>
+                                    <h4 style={{ marginTop: 0 }}>Pro Tip</h4>
+                                    <p style={{ fontSize: '0.875rem', opacity: 0.9, lineHeight: 1.5, margin: 0 }}>
+                                        Generic or purely theoretical answers will yield a lower score. Provide an exact scenario or structure to achieve a Verified status.
+                                    </p>
+                                </div>
                             </div>
                         </div>
-
-                        {/* Sidebar Info */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                            <div style={{ background: 'var(--color-bg-paper)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', padding: '1.5rem' }}>
-                                <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: 0 }}>
-                                    <Sparkles size={18} color="#eab308" /> Evaluation Criteria
-                                </h4>
-                                <ul style={{ paddingLeft: '1.25rem', color: 'var(--color-text-muted)', fontSize: '0.875rem', lineHeight: 1.6 }}>
-                                    <li>Provide real-world context</li>
-                                    <li>Use proper technical vocabulary</li>
-                                    <li>Explain your complete flow</li>
-                                    <li>Minimum 150 characters expected</li>
-                                </ul>
+                    ) : (
+                        /* Result Section */
+                        <div className="animate-fade-in" style={{ background: 'var(--color-bg-paper)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', padding: '3rem', textAlign: 'center', boxShadow: 'var(--shadow-md)' }}>
+                            <div style={{ width: '80px', height: '80px', background: result.status === 'Verified' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(234, 179, 8, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem auto', color: result.status === 'Verified' ? 'var(--color-success)' : 'var(--color-warning)' }}>
+                                {result.status === 'Verified' ? <CheckCircle2 size={48} /> : <AlertCircle size={48} />}
                             </div>
 
-                            <div style={{ background: 'linear-gradient(135deg, var(--color-primary-dark), var(--color-primary))', border: 'none', borderRadius: 'var(--radius-xl)', padding: '1.5rem', color: 'white' }}>
-                                <h4 style={{ marginTop: 0 }}>Pro Tip</h4>
-                                <p style={{ fontSize: '0.875rem', opacity: 0.9, lineHeight: 1.5, margin: 0 }}>
-                                    Generic or purely theoretical answers will yield a lower score. Provide an exact scenario or structure to achieve a Verified status.
+                            <h2 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>
+                                Score: {result.score}% ({result.level})
+                            </h2>
+                            <p style={{ color: 'var(--color-text-muted)', maxWidth: '500px', margin: '0 auto 2.5rem auto', fontWeight: 500, fontSize: '1.1rem' }}>
+                                {result.status === 'Verified'
+                                    ? 'Congratulations! You successfully demonstrated your proficiency.'
+                                    : 'Your submission is a great start, but it needs a bit more detail to verify.'}
+                            </p>
+
+                            <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: '24px', padding: '2.5rem', textAlign: 'left', position: 'relative', overflow: 'hidden' }}>
+                                <div style={{ position: 'absolute', top: '-10px', right: '-10px', opacity: 0.1 }}>
+                                    <Lightbulb size={120} color="var(--color-primary)" />
+                                </div>
+
+                                <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: 0, color: 'var(--color-primary)' }}>
+                                    <Sparkles size={20} /> Evaluation Feedback
+                                </h4>
+                                <p style={{ lineHeight: 1.7, color: 'var(--color-text)', fontSize: '1.05rem', margin: '1rem 0 0 0', position: 'relative', zIndex: 1 }}>
+                                    {result.suggestion}
                                 </p>
                             </div>
-                        </div>
-                    </div>
-                ) : (
-                    /* Result Section */
-                    <div className="animate-fade-in" style={{ background: 'var(--color-bg-paper)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', padding: '3rem', textAlign: 'center', boxShadow: 'var(--shadow-md)' }}>
-                        <div style={{ width: '80px', height: '80px', background: result.status === 'Verified' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(234, 179, 8, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem auto', color: result.status === 'Verified' ? 'var(--color-success)' : 'var(--color-warning)' }}>
-                            {result.status === 'Verified' ? <CheckCircle2 size={48} /> : <AlertCircle size={48} />}
-                        </div>
-                        
-                        <h2 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>
-                            Score: {result.score}% ({result.level})
-                        </h2>
-                        <p style={{ color: 'var(--color-text-muted)', maxWidth: '500px', margin: '0 auto 2.5rem auto', fontWeight: 500, fontSize: '1.1rem' }}>
-                            {result.status === 'Verified' 
-                                ? 'Congratulations! You successfully demonstrated your proficiency.' 
-                                : 'Your submission is a great start, but it needs a bit more detail to verify.'}
-                        </p>
 
-                        <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: '24px', padding: '2.5rem', textAlign: 'left', position: 'relative', overflow: 'hidden' }}>
-                            <div style={{ position: 'absolute', top: '-10px', right: '-10px', opacity: 0.1 }}>
-                                <Lightbulb size={120} color="var(--color-primary)" />
+                            <div style={{ marginTop: '3rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+                                <Button variant="outline" onClick={resetEvaluation}>Take Again</Button>
+                                <Button className="btn-primary" onClick={() => navigate('/assessment')}>Return to Hub</Button>
                             </div>
-                            
-                            <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: 0, color: 'var(--color-primary)' }}>
-                                <Sparkles size={20} /> Evaluation Feedback
-                            </h4>
-                            <p style={{ lineHeight: 1.7, color: 'var(--color-text)', fontSize: '1.05rem', margin: '1rem 0 0 0', position: 'relative', zIndex: 1 }}>
-                                {result.suggestion}
-                            </p>
                         </div>
-
-                        <div style={{ marginTop: '3rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
-                            <Button variant="outline" onClick={resetEvaluation}>Take Again</Button>
-                            <Button className="btn-primary" onClick={() => navigate('/assessment')}>Return to Hub</Button>
-                        </div>
-                    </div>
                     );
                 })()}
             </div>

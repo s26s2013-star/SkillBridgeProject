@@ -438,8 +438,13 @@ export const Skills = () => {
                                 style={{ width: '100%', fontSize: '1rem', padding: '0.6rem 0' }}
                                 onClick={() => {
                                     const skillName = selectedSkill.name;
+                                    const isTech = selectedSkill.type?.toLowerCase() === 'technical';
                                     setSelectedSkill(null);
-                                    navigate(`/assessment?skill=${encodeURIComponent(skillName)}`);
+                                    if (isTech) {
+                                        navigate(`/assessment?techSkill=${encodeURIComponent(skillName)}`);
+                                    } else {
+                                        navigate(`/assessment?skill=${encodeURIComponent(skillName)}`);
+                                    }
                                 }}
                             >
                                 Test This Skill
