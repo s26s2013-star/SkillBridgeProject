@@ -335,24 +335,24 @@ export const Skills = () => {
                         <div className="spinner" style={{ margin: '0 auto 1rem auto' }}></div>
                         <p style={{ color: 'var(--color-text-muted)', fontSize: '1rem' }}>Loading specialized skills...</p>
                     </div>
-                ) : !data.major || data.major === 'Not specified' ? (
-                    <div style={{ textAlign: 'center', padding: '3rem 2rem', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '12px' }}>
-                        <AlertCircle size={48} color="var(--color-warning)" style={{ margin: '0 auto 1rem auto', opacity: 0.8 }} />
-                        <h3 style={{ fontSize: '1.4rem', marginBottom: '0.5rem', fontWeight: 600 }}>Specialization Required</h3>
-                        <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', maxWidth: '400px', margin: '0 auto 1.5rem auto' }}>
-                            Update your profile with an IT Specialization to view required competencies.
-                        </p>
-                        <Button className="btn-primary" onClick={() => navigate('/profile')}>Complete Profile</Button>
-                    </div>
-                ) : data.skills.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '3rem 2rem', background: 'var(--color-bg)', border: '1px dashed var(--color-border)', borderRadius: '12px' }}>
-                        <Wrench size={48} color="var(--color-text-muted)" style={{ margin: '0 auto 1rem auto', opacity: 0.4 }} />
-                        <h3 style={{ fontSize: '1.3rem', marginBottom: '0.5rem', fontWeight: 600 }}>No Skills Mapped</h3>
-                        <p style={{ color: 'var(--color-text-muted)' }}>We couldn't find standardized competencies for "{data.major}".</p>
-                    </div>
                 ) : (
                     <>
-                        {technicalSkills.length > 0 && (
+                        {!data.major || data.major === 'Not specified' ? (
+                            <div style={{ textAlign: 'center', padding: '3rem 2rem', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '12px', marginBottom: '2rem' }}>
+                                <AlertCircle size={48} color="var(--color-warning)" style={{ margin: '0 auto 1rem auto', opacity: 0.8 }} />
+                                <h3 style={{ fontSize: '1.4rem', marginBottom: '0.5rem', fontWeight: 600 }}>Specialization Required</h3>
+                                <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', maxWidth: '400px', margin: '0 auto 1.5rem auto' }}>
+                                    Update your profile with an IT Specialization to view required technical competencies.
+                                </p>
+                                <Button className="btn-primary" onClick={() => navigate('/profile')}>Complete Profile</Button>
+                            </div>
+                        ) : technicalSkills.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '3rem 2rem', background: 'var(--color-bg)', border: '1px dashed var(--color-border)', borderRadius: '12px', marginBottom: '2rem' }}>
+                                <Wrench size={48} color="var(--color-text-muted)" style={{ margin: '0 auto 1rem auto', opacity: 0.4 }} />
+                                <h3 style={{ fontSize: '1.3rem', marginBottom: '0.5rem', fontWeight: 600 }}>No Technical Skills Mapped</h3>
+                                <p style={{ color: 'var(--color-text-muted)' }}>We couldn't find standardized competencies for "{data.major}".</p>
+                            </div>
+                        ) : (
                             <div style={{ marginBottom: '3rem' }}>
                                 <div className="section-header-simple">
                                     <Layers color="var(--color-primary)" size={22} />
@@ -438,8 +438,13 @@ export const Skills = () => {
                                 style={{ width: '100%', fontSize: '1rem', padding: '0.6rem 0' }}
                                 onClick={() => {
                                     const skillName = selectedSkill.name;
+                                    const isTech = selectedSkill.type?.toLowerCase() === 'technical';
                                     setSelectedSkill(null);
-                                    navigate(`/assessment?skill=${encodeURIComponent(skillName)}`);
+                                    if (isTech) {
+                                        navigate(`/assessment?techSkill=${encodeURIComponent(skillName)}`);
+                                    } else {
+                                        navigate(`/assessment?skill=${encodeURIComponent(skillName)}`);
+                                    }
                                 }}
                             >
                                 Test This Skill
