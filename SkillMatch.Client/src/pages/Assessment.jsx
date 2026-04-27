@@ -215,7 +215,7 @@ export const Assessment = () => {
             if (!res.ok) throw new Error("Could not fetch profile");
             const profileData = await res.json();
 
-            profileData.skills = updatedSkillNames;
+            profileData.skills = updatedSkillList;
 
             await fetch(`${API_BASE_URL}/api/user/profile`, {
                 method: 'PUT',
@@ -299,7 +299,7 @@ export const Assessment = () => {
         newSkillsList = newSkillsList.filter(s => s.name.toLowerCase() !== name.toLowerCase());
         newSkillsList = [skillToAdd, ...newSkillsList];
 
-        await saveSkillsToProfile(finalSkillsList.map(s => ({
+        await saveSkillsToProfile(newSkillsList.map(s => ({
             name: s.name, level: s.level, progress: s.progress, status: s.status,
             description: s.description, components: s.components, category: s.category
         })));
@@ -816,12 +816,6 @@ ${caseStudyAnswers.testing_edge_cases}`;
         navigate('/assessment'); // Removes query param, returns to hub
     };
 
-    const SOFT_SKILLS_LIST = ["Communication", "Teamwork", "Problem Solving", "Adaptability"];
-    const unevaluatedSoftSkills = SOFT_SKILLS_LIST.filter(
-        ss => !skills.some(s => s.name.toLowerCase() === ss.toLowerCase())
-    );
-    const allSoftAnswered = unevaluatedSoftSkills.length > 0 &&
-        unevaluatedSoftSkills.every(ss => softSkillAnswers[ss] !== undefined);
 
     if (loading) {
         return (
@@ -1240,30 +1234,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                         </div>
                                                     </div>
                                                 )}
-
-                                            {activeTab === 'soft' && (
-                                                <div>
-                                                    <p style={{ marginBottom: '1rem', color: '#666' }}>Evaluate your core behavioral attributes.</p>
-                                                    {SOFT_SKILLS_LIST.map(skill => {
-                                                        const isDone = skills.some(s => s.name === skill);
-                                                        const qObj = getShortEvaluationForSkill(skill, 'Soft');
-                                                        if (isDone) return null;
-                                                        return (
-                                                            <div key={skill} style={{ marginBottom: '2rem', border: '1px solid var(--color-border)', padding: '1rem' }}>
-                                                                <h5 style={{ color: 'var(--color-primary)', marginBottom: '0.5rem' }}>{skill}</h5>
-                                                                <p style={{ fontSize: '0.9rem', marginBottom: '1rem' }}>{qObj.question}</p>
-                                                                {qObj.options.map((opt, i) => (
-                                                                    <label key={i} style={{ display: 'block', padding: '0.5rem', cursor: 'pointer' }}>
-                                                                        <input type="radio" checked={softSkillAnswers[skill] === i} onChange={() => setSoftSkillAnswers({...softSkillAnswers, [skill]: i})} />
-                                                                        <span style={{ marginLeft: '0.5rem' }}>{opt.text}</span>
-                                                                    </label>
-                                                                ))}
-                                                            </div>
-                                                        )
-                                                    })}
-                                                    <Button onClick={submitAllSoftSkills} disabled={!allSoftAnswered}>Submit Soft Skills</Button>
-                                                </div>
-                                            )}
+                                            </div>
                                         </>
                                     )}
 
@@ -1365,20 +1336,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
     // === INDIVIDUAL SKILL EVALUATION VIEW (Stage 3 Layout) ===
     return (
         <DashboardLayout user={user} onLogout={handleLogout}>
-            <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem' }}>
-                <button onClick={() => navigate('/assessment')} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '2rem', background: 'none', border: 'none', cursor: 'pointer', color: '#666' }}>
-                    <ChevronLeft size={16} /> Back to Hub
-                </button>
-
-                {!result ? (
-                    <div style={{ background: 'white', padding: '2rem', borderRadius: '1rem', border: '1px solid #eee' }}>
-                        <h2 style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>{activeSkillName} Evaluation</h2>
-                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', borderBottom: '1px solid #eee' }}>
-                            <button onClick={() => setSubmissionMode('quiz')} style={{ padding: '1rem', borderBottom: submissionMode === 'quiz' ? '2px solid blue' : '0', cursor: 'pointer' }}>AI Quiz</button>
-                            <button onClick={() => setSubmissionMode('text')} style={{ padding: '1rem', borderBottom: submissionMode === 'text' ? '2px solid blue' : '0', cursor: 'pointer' }}>Scenario Answer</button>
-                            <button onClick={() => setSubmissionMode('upload')} style={{ padding: '1rem', borderBottom: submissionMode === 'upload' ? '2px solid blue' : '0', cursor: 'pointer' }}>Upload Evidence</button>
-                        </div>
-            <div className="dashboard-section" style={{ maxWidth: '1000px', margin: '0 auto' }}>
+            <div className="dashboard-section" style={{ maxWidth: '1000px', margin: '0 auto', padding: '2rem' }}>
                 <div style={{ marginBottom: '1.5rem' }}>
                     <button
                         onClick={() => navigate('/assessment')}

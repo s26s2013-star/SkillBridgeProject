@@ -1543,52 +1543,49 @@ async def evaluate_voice_multi(
 
 # --- ENDPOINTS: UPSKILL PLAN ---
 
-@app.post("/api/upskill-plan")
-def create_upskill_plan(req: UpskillPlanRequest):
-    db = get_db()
-    users_collection = db["users"]
-    email_clean = req.email.lower().strip()
-    user = users_collection.find_one({"email": email_clean})
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-        
-    user_skills = user.get("skills", [])
-    weak_skills = []
-    for s in user_skills:
-        s_name = s.get("name") if isinstance(s, dict) else s
-        progress = s.get("progress", 0) if isinstance(s, dict) else 0
-        if progress < 70:
-            weak_skills.append(s_name)
-            
-    if not weak_skills:
-        major = user.get("major", "Technology")
-        weak_skills = [f"Advanced {major} Concepts", "Industry Best Practices", "System Design"]
-        
-    career_path = user.get("major", "Technology")
-    market_demand_context = "High demand in Oman's tech industry for cloud, data, and software engineering skills."
-
-    plan = generate_skill_analysis_and_plan(weak_skills, career_path, market_demand_context)
-    users_collection.update_one(
-        {"email": email_clean},
-        {"$set": {"upskill_plan": plan, "upskill_plan_generated_at": datetime.utcnow().isoformat()}}
-    )
-    return plan
 
 @app.get("/api/upskill-plan")
 def get_upskill_plan_endpoint(email: str):
     db = get_db()
-    users_collection = db["users"]
     email_clean = email.lower().strip()
-    user = users_collection.find_one({"email": email_clean})
+    user = db["users"].find_one({"email": email_clean})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
     plan = user.get("upskill_plan")
     if not plan:
-        return {"message": "No upskill plan found. Please generate one.", "status": "empty"}
-    return plan
+        return {"status": "empty", "message": "No upskill plan found. Please generate one."}
 
+    return plan
+from upskill_service import build_full_plan_with_resources
+class UpskillPlanRequest(BaseModel):
+    email: str
+
+@app.post("/api/upskill-plan")
+async def generate_upskill_plan_endpoint(request: UpskillPlanRequest):
+    email_clean = request.email.lower().strip()
+
+    db = get_db()
+    user = db["users"].find_one({"email": email_clean})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    skills = user.get("skills", [])
+    if not skills:
+        raise HTTPException(
+            status_code=400,
+            detail="No skills found in your profile. Please complete the MCQ assessment first."
+        )
+
+    plan = await build_full_plan_with_resources(email_clean)
+
+    if not plan:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate plan. Please check your API keys and try again."
+        )
+
+    return plan
 @app.get("/api/market/top-skills")
 def get_top_skills():
     from datetime import datetime
