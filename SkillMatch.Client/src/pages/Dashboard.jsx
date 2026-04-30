@@ -66,7 +66,7 @@ export const Dashboard = () => {
 
                 const fields = [
                     profileData.name && profileData.name !== 'User',
-                    profileData.major && profileData.major !== 'Not specified' && profileData.major.toLowerCase() !== 'general',
+                    profileData.major && profileData.major !== 'Not specified',
                     profileData.experience > 0,
                     profileData.location && profileData.location !== 'Not specified',
                     profileData.job_type && profileData.job_type !== 'Not specified',
@@ -92,7 +92,7 @@ export const Dashboard = () => {
                     activities.push({
                         id: 'verification-1',
                         type: 'verification',
-                        text: 'Verified Virtualization Skill',
+                        text: 'Verified Backend Development Skill',
                         time: 'Recently',
                         icon: 'shield'
                     });

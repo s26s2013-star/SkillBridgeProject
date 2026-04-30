@@ -31,6 +31,24 @@ export const Skills = () => {
                 const res = await fetch(`${API_BASE_URL}/api/skills/for-user?email=${encodeURIComponent(userEmail)}`);
                 if (res.ok && isMounted) {
                     const result = await res.json();
+                    
+                    const softSkills = result.skills.filter(s => s.type?.toLowerCase() === 'soft');
+                    const techSkills = result.skills.filter(s => s.type?.toLowerCase() !== 'soft');
+                    
+                    const userMajor = result.major || user?.major || "";
+                    let allowedTechNames = [];
+                    
+                    if (userMajor === 'Software Engineering') {
+                        allowedTechNames = ['Backend Development (APIs)', 'Testing & Debugging'];
+                    } else if (userMajor === 'Data Science & AI') {
+                        allowedTechNames = ['Data Analysis (Python)', 'Machine Learning'];
+                    } else if (userMajor === 'Network Computing') {
+                        allowedTechNames = ['Routing & Switching', 'Network Security'];
+                    }
+                    
+                    const filteredTechSkills = techSkills.filter(s => allowedTechNames.includes(s.name));
+                    
+                    result.skills = [...softSkills, ...filteredTechSkills];
                     setData(result);
                 }
             } catch (err) {
@@ -338,7 +356,7 @@ export const Skills = () => {
                     </div>
                 ) : (
                     <>
-                        {!data.major || data.major === 'Not specified' || data.major.toLowerCase() === 'general' ? (
+                        {!data.major || data.major === 'Not specified' ? (
                             <div style={{ textAlign: 'center', padding: '3rem 2rem', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: '12px', marginBottom: '2rem' }}>
                                 <AlertCircle size={48} color="var(--color-warning)" style={{ margin: '0 auto 1rem auto', opacity: 0.8 }} />
                                 <h3 style={{ fontSize: '1.4rem', marginBottom: '0.5rem', fontWeight: 600 }}>Specialization Required</h3>

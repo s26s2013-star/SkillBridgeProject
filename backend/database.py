@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 
 MONGO_URI = os.getenv(
     "MONGO_URI",
-    "mongodb+srv://manaralnabhani95_db_user:B%26techp5@cluster0.wjwh5vq.mongodb.net/SkillBridgeDB?appName=Cluster0"
+    "mongodb+srv://manaralnabhani95_db_user:B%26techp5@cluster0.wjwh5vq.mongodb.net/SkillBridgeDB?retryWrites=true&w=majority"
 )
+print("USING MONGO_URI:", MONGO_URI)
 
 _client = None
 _db = None

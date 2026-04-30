@@ -200,7 +200,7 @@ export const Profile = () => {
                             <div className="profile-detail-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '2rem' }}>
                                 <div>
                                     <h5 style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '0.5rem' }}>Major</h5>
-                                    <p style={{ fontWeight: '600', fontSize: '1.05rem' }}>{(profileData.major && profileData.major.toLowerCase() !== 'general') ? profileData.major : 'Not specified'}</p>
+                                    <p style={{ fontWeight: '600', fontSize: '1.05rem' }}>{profileData.major || 'Not specified'}</p>
                                 </div>
                                 <div>
                                     <h5 style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '0.5rem' }}>Experience</h5>
@@ -258,13 +258,9 @@ export const Profile = () => {
                                         style={{ padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', outline: 'none', background: 'white' }}
                                     >
                                         <option value="">Select Major</option>
-                                        <option value="Information System">Information System</option>
                                         <option value="Software Engineering">Software Engineering</option>
-                                        <option value="Network Computing">Network Computing</option>
-                                        <option value="Web & Mobile Technologies">Web & Mobile Technologies</option>
-                                        <option value="Cloud Computing">Cloud Computing</option>
                                         <option value="Data Science & AI">Data Science & AI</option>
-                                        <option value="Cyber Security">Cyber Security</option>
+                                        <option value="Network Computing">Network Computing</option>
                                     </select>
                                 </div>
                             </div>

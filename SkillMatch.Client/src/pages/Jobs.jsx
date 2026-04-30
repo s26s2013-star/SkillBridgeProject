@@ -6,19 +6,12 @@ import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Briefcase, MapPin, Building2, AlertCircle } from 'lucide-react';
 
 const STATIC_JOBS = {
-    "Information System": [
-        { title: "IT Business Analyst", company: "Omantel", location: "Muscat, Oman", description: "Bridge the gap between IT and business by gathering requirements and improving internal processes." },
-        { title: "Database Administrator", company: "Bank Muscat", location: "Muscat, Oman", description: "Manage and optimize enterprise databases ensuring data integrity and high availability." },
-        { title: "ERP Consultant", company: "Petroleum Development Oman", location: "Mina Al Fahal, Oman", description: "Implement and support SAP ERP systems for large-scale operations." },
-        { title: "IT Project Manager", company: "Ooredoo Oman", location: "Muscat, Oman", description: "Lead tech projects from conception to deployment within budget and timelines." },
-        { title: "Systems Analyst", company: "Ministry of Technology", location: "Muscat, Oman", description: "Analyze hardware and software systems to improve government business efficiency." }
-    ],
     "Software Engineering": [
         { title: "Software Engineer", company: "Mulkia Investment", location: "Muscat, Oman", description: "Design, develop, and maintain software applications for enterprise financial clients." },
         { title: "Full Stack Developer", company: "Thawani Technologies", location: "Muscat, Oman", description: "Build scalable web applications using modern JavaScript frameworks for fintech startups." },
         { title: "Quality Assurance Engineer", company: "Awasr", location: "Seeb, Oman", description: "Ensure software reliability and performance through automated and manual testing." },
         { title: "Systems Architect", company: "Royal Oman Police", location: "Muscat, Oman", description: "Design complex IT architectures for government and corporate software infrastructure." },
-        { title: "Mobile App Developer", company: "NBO", location: "Muscat, Oman", description: "Develop native iOS and Android applications for digital banking platforms." }
+        { title: "Backend Developer", company: "eMushrif", location: "Muscat, Oman", description: "Develop robust RESTful APIs and manage database operations using Node.js and .NET." }
     ],
     "Network Computing": [
         { title: "Network Administrator", company: "Sohar Port and Freezone", location: "Sohar, Oman", description: "Manage and support LAN/WAN infrastructure for large logistics organizations." },
@@ -27,45 +20,12 @@ const STATIC_JOBS = {
         { title: "Systems Administrator", company: "Sultan Qaboos University", location: "Al Khoudh, Oman", description: "Maintain server hardware, operating systems, and campus network services." },
         { title: "Network Security Specialist", company: "Central Bank of Oman", location: "Muscat, Oman", description: "Implement firewalls, VPNs, and intrusion detection systems to secure enterprise networks." }
     ],
-    "Web & Mobile Technologies": [
-        { title: "Frontend Developer", company: "Phaze Ventures", location: "Muscat, Oman", description: "Create responsive and dynamic user interfaces using React and modern CSS." },
-        { title: "Backend Developer", company: "eMushrif", location: "Muscat, Oman", description: "Develop robust RESTful APIs and manage database operations using Node.js and .NET." },
-        { title: "UI/UX Designer", company: "Oman Arab Bank", location: "Muscat, Oman", description: "Design intuitive digital experiences and user interfaces for mobile and web platforms." },
-        { title: "E-Commerce Specialist", company: "Talabat Oman", location: "Muscat, Oman", description: "Build and maintain high-traffic online shopping platforms for regional businesses." },
-        { title: "Mobile UI Engineer", company: "Nizwa Bank", location: "Muscat, Oman", description: "Focus on creating seamless interactive experiences for mobile touch interfaces." }
-    ],
-    "Web and Mobile Technologies": [ // Fallback alias
-        { title: "Frontend Developer", company: "Phaze Ventures", location: "Muscat, Oman", description: "Create responsive and dynamic user interfaces using React and modern CSS." },
-        { title: "Backend Developer", company: "eMushrif", location: "Muscat, Oman", description: "Develop robust RESTful APIs and manage database operations using Node.js and .NET." },
-        { title: "UI/UX Designer", company: "Oman Arab Bank", location: "Muscat, Oman", description: "Design intuitive digital experiences and user interfaces for mobile and web platforms." },
-        { title: "E-Commerce Specialist", company: "Talabat Oman", location: "Muscat, Oman", description: "Build and maintain high-traffic online shopping platforms for regional businesses." }
-    ],
-    "Cloud Computing": [
-        { title: "Cloud Solutions Architect", company: "Oman Data Park", location: "Muscat, Oman", description: "Design comprehensive enterprise cloud environments and hybrid cloud migration strategies." },
-        { title: "DevOps Engineer", company: "Omantel", location: "Muscat, Oman", description: "Automate CI/CD pipelines and infrastructure provisioning using Docker and Terraform." },
-        { title: "Site Reliability Engineer", company: "Thawani", location: "Muscat, Oman", description: "Ensure high availability and fault tolerance of cloud-native financial applications." },
-        { title: "Cloud Platform Engineer", company: "Asyad Group", location: "Muscat, Oman", description: "Manage and run containerized workloads on robust cloud infrastructures." },
-        { title: "Cloud Security Engineer", company: "Bank Muscat", location: "Muscat, Oman", description: "Implement identity and access management for distributed cloud architectures." }
-    ],
     "Data Science & AI": [
         { title: "Data Analyst", company: "OQ", location: "Muscat, Oman", description: "Interpret complex data sets and create business intelligence reports using PowerBI and SQL." },
         { title: "Machine Learning Engineer", company: "Petroleum Development Oman", location: "Muscat, Oman", description: "Develop predictive models and AI-driven solutions for the oil and logistics sectors." },
         { title: "Data Engineer", company: "Bank Dhofar", location: "Muscat, Oman", description: "Build scalable data pipelines and manage large-scale enterprise data warehouses." },
         { title: "AI Researcher", company: "Sultan Qaboos University", location: "Al Khoudh, Oman", description: "Research and implement natural language processing and computer vision applications." },
         { title: "Business Intelligence Developer", company: "Oman Air", location: "Muscat, Oman", description: "Design and develop enterprise reporting solutions and operational dashboards." }
-    ],
-    "Data Science and AI": [ // Fallback alias
-        { title: "Data Analyst", company: "OQ", location: "Muscat, Oman", description: "Interpret complex data sets and create business intelligence reports using PowerBI and SQL." },
-        { title: "Machine Learning Engineer", company: "Petroleum Development Oman", location: "Muscat, Oman", description: "Develop predictive models and AI-driven solutions for the oil and logistics sectors." },
-        { title: "Data Engineer", company: "Bank Dhofar", location: "Muscat, Oman", description: "Build scalable data pipelines and manage large-scale enterprise data warehouses." },
-        { title: "Business Intelligence Developer", company: "Oman Air", location: "Muscat, Oman", description: "Design and develop enterprise reporting solutions and operational dashboards." }
-    ],
-    "Cyber Security": [
-        { title: "SOC Analyst", company: "Oman National CERT", location: "Muscat, Oman", description: "Monitor network traffic and detect national security incidents in real-time." },
-        { title: "Penetration Tester", company: "Bank Muscat", location: "Muscat, Oman", description: "Conduct ethical hacking and vulnerability assessments for financial systems." },
-        { title: "Information Security Manager", company: "Ooredoo Oman", location: "Muscat, Oman", description: "Develop and enforce security policies and ensure compliance with Oman's data protection laws." },
-        { title: "Cyber Forensic Investigator", company: "Royal Oman Police", location: "Muscat, Oman", description: "Analyze digital evidence and respond to complex cyber incidents and breaches." },
-        { title: "Cloud Security Architect", company: "Oman Data Park", location: "Muscat, Oman", description: "Design robust security controls for enterprise multi-cloud environments hosting sensitive data." }
     ]
 };
 

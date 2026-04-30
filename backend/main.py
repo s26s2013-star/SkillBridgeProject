@@ -191,11 +191,11 @@ def get_skills(major: Optional[str] = None):
         
     # Injected Core Soft Skills
     core_soft_skills = [
-        {"skill_name": "Communication", "category": "Soft", "major": "General"},
-        {"skill_name": "Teamwork", "category": "Soft", "major": "General"},
-        {"skill_name": "Problem Solving", "category": "Soft", "major": "General"},
-        {"skill_name": "Time Management", "category": "Soft", "major": "General"},
-        {"skill_name": "Adaptability", "category": "Soft", "major": "General"}
+        {"skill_name": "Communication", "category": "Soft", "major": ""},
+        {"skill_name": "Teamwork", "category": "Soft", "major": ""},
+        {"skill_name": "Problem Solving", "category": "Soft", "major": ""},
+        {"skill_name": "Time Management", "category": "Soft", "major": ""},
+        {"skill_name": "Adaptability", "category": "Soft", "major": ""}
     ]
     
     for ss in core_soft_skills:
@@ -257,6 +257,22 @@ def get_skills_by_specialization(major: str):
             skills_list.append(skill)
         
     return skills_list
+    
+@app.get("/api/major-assessment")
+def get_major_assessment(major: str):
+    db = get_db()
+    collection = db["major_assessments"]
+    task = collection.find_one({"major": {"$regex": f"^{major.strip()}$", "$options": "i"}})
+    if not task:
+        # Fallback to a generic task if major not found
+        return {
+            "major": major,
+            "task_description": f"Provide a detailed technical overview of your role and responsibilities as a {major} professional.",
+            "required_keywords": ["professional", "technical", "workflow", "standards"]
+        }
+    task["_id"] = str(task["_id"])
+    return task
+
 
 @app.get("/api/skills/for-user")
 def get_skills_for_user_optimized(email: str):
@@ -1119,19 +1135,24 @@ def get_technical_questions(skill_name: str, major: Optional[str] = None):
     db = get_db()
     tech_qs_collection = db["technical_questions"]
     
-    query = {"skill_name": {"$regex": f"^{skill_name.strip()}$", "$options": "i"}}
+    query = {"skill_name": {"$regex": f"^{re.escape(skill_name.strip())}$", "$options": "i"}}
     if major:
-        query["major"] = {"$regex": f"^{major.strip()}$", "$options": "i"}
+        query["major"] = {"$regex": f"^{re.escape(major.strip())}$", "$options": "i"}
         
-    questions_cursor = tech_qs_collection.find(query).sort("question_number", 1).limit(3)
+    # Get ALL available questions for this skill
+    all_questions = list(tech_qs_collection.find(query))
+    
+    # Randomly select 3 questions from the pool
+    selected_questions = random.sample(all_questions, min(3, len(all_questions)))
     
     questions_list = []
-    for q in questions_cursor:
+    for q in selected_questions:
         safe_options = []
         for opt in q.get("options", []):
             safe_options.append({
                 "option_text": opt.get("option_text", "")
             })
+        # Shuffle options inside each question to prevent position bias
         random.shuffle(safe_options)
             
         questions_list.append({
@@ -1166,18 +1187,18 @@ def score_technical_assessment(submission: TechAssessmentSubmission):
     if len(set(req_question_numbers)) != 3:
         raise HTTPException(status_code=400, detail="Answers contain duplicate question numbers.")
         
-    query = {"skill_name": {"$regex": f"^{submission.skill_name.strip()}$", "$options": "i"}}
+    query = {"skill_name": {"$regex": f"^{re.escape(submission.skill_name.strip())}$", "$options": "i"}}
     if submission.major and submission.major.strip():
-        query["major"] = {"$regex": f"^{submission.major.strip()}$", "$options": "i"}
+        query["major"] = {"$regex": f"^{re.escape(submission.major.strip())}$", "$options": "i"}
         
     # 3. Read the questions for that skill
     questions_cursor = list(tech_qs_collection.find(query))
     
-    # 4. Validation: Reject if the skill does not have exactly 3 questions
-    if len(questions_cursor) != 3:
+    # 4. Validation: Ensure skill exists and has at least some questions
+    if not questions_cursor:
         raise HTTPException(
-            status_code=400, 
-            detail=f"This skill requires exactly 3 questions in the catalog, but {len(questions_cursor)} were found."
+            status_code=404, 
+            detail=f"No questions found for skill: {submission.skill_name}"
         )
         
     total_score = 0

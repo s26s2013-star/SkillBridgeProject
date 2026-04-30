@@ -30,6 +30,8 @@ export const Assessment = () => {
     const [activeTab, setActiveTab] = useState('technical');
     const [softSkillAnswers, setSoftSkillAnswers] = useState({}); // { skillName: optionIndex }
     const [shortTestResult, setShortTestResult] = useState(null);
+    const [activeShortTest, setActiveShortTest] = useState(null);
+    const [shortTestSelection, setShortTestSelection] = useState(null);
 
     // === MAJOR ASSESSMENT STATE (Stage 2) ===
     const [majorAssessmentTask, setMajorAssessmentTask] = useState(null);
@@ -85,6 +87,9 @@ export const Assessment = () => {
     const [mediaRecorders, setMediaRecorders] = useState([null, null, null]);
     const [evalError, setEvalError] = useState(null);
     const [scenarioModes, setScenarioModes] = useState(['text', 'text', 'text']);
+    const [quizQuestions, setQuizQuestions] = useState([]);
+    const [quizAnswers, setQuizAnswers] = useState([]);
+    const [quizLoading, setQuizLoading] = useState(false);
 
     const isSoft = skillDetails?.category === 'Soft';
 
@@ -106,7 +111,6 @@ export const Assessment = () => {
                     userSkillNames = profileData.skills || [];
                     pulledMajor = profileData.major ? profileData.major.trim() : null;
                     setUserMajor(pulledMajor);
-                    console.log("[Assessment] User major from DB:", pulledMajor);
                 }
 
                 // Fetch ALL skills (for skill detail lookups)
@@ -123,7 +127,7 @@ export const Assessment = () => {
                     
                     // Fetch Major Assessment details (Stage 2)
                     setMajorLoading(true);
-                    const majorTaskRes = await fetch(`http://127.0.0.1:8000/api/major-assessment?major=${encodeURIComponent(pulledMajor)}`);
+                    const majorTaskRes = await fetch(`${API_BASE_URL}/api/major-assessment?major=${encodeURIComponent(pulledMajor)}`);
                     if (majorTaskRes.ok) {
                         setMajorAssessmentTask(await majorTaskRes.json());
                     }
@@ -335,15 +339,26 @@ export const Assessment = () => {
     const startTechnicalAssessment = async (skillName) => {
         setTechLoading(true);
         setActiveTechSkill(skillName);
+        
+        // Reset states for a fresh start
+        setTechAnswers({});
+        setTechResult(null);
+        setCurrentTechIdx(0);
+        setCaseStudyAnswers({
+            problem_understanding: '',
+            root_cause: '',
+            proposed_solution: '',
+            implementation_steps: '',
+            testing_edge_cases: ''
+        });
+        setCaseStudyFile(null);
+
         try {
             const majorParam = userMajor ? `&major=${encodeURIComponent(userMajor)}` : '';
             const res = await fetch(`${API_BASE_URL}/api/technical-questions?skill_name=${encodeURIComponent(skillName)}${majorParam}`);
             const data = await res.json();
             if (data.questions && data.questions.length > 0) {
                 setTechQuestions(data.questions);
-                setCurrentTechIdx(0);
-                setTechAnswers({});
-                setTechResult(null);
                 setTechFlowActive(true);
             } else {
                 alert("No questions found for this skill.");
@@ -491,21 +506,40 @@ ${caseStudyAnswers.testing_edge_cases}`;
 
     // availableSkills: already pre-filtered server-side via /api/skills/by-specialization
     // Apply a loose client-side fallback filter just in case the list contains mixed majors
+    // Final Filtered Skills (Technical) for the selection modal
     const availableSkills = dbSkillsList.filter(skill => {
-        if (!skill.skill_name) return false;  // ensure it's a valid skill doc
-        if (!userMajor) return true;          // if no major set, show all (shouldn't happen)
-        if (!skill.major) return true;         // if skill has no major, keep it
-        return skill.major.trim().toLowerCase().includes(userMajor.trim().toLowerCase()) ||
-            userMajor.trim().toLowerCase().includes(skill.major.trim().toLowerCase());
+        if (!skill.skill_name) return false;
+        
+        const skillMajor = (skill.major || "").trim().toLowerCase();
+        const userMajorClean = (userMajor || "").trim().toLowerCase();
+        const skillCategory = (skill.category || "").trim().toLowerCase();
+        
+        // Requirements: Technical skills for selected specialization only
+        if (skillCategory === 'soft') return false;
+        
+        // Exclude "General" as a fallback major if it's not the user's specific major
+        if (skillMajor === 'general' && userMajorClean !== 'general') return false;
+        
+        return skillMajor === userMajorClean;
     });
-    console.log("[Assessment] availableSkills count:", availableSkills.length);
 
-    const SOFT_SKILLS = ["Communication", "Teamwork", "Problem Solving", "Time Management", "Adaptability"];
-    const unevaluatedSoftSkills = SOFT_SKILLS.filter(
-        ss => !skills.some(s => s.name.toLowerCase() === ss.toLowerCase())
+    // Final Filtered Skills (Soft) from API/DB
+    const availableSoftSkills = dbSkillsList.filter(s => 
+        (s.category || "").trim().toLowerCase() === 'soft'
+    );
+
+    // Use DB soft skills or standard core list
+    const SOFT_SKILLS_LIST = availableSoftSkills.length > 0 
+        ? availableSoftSkills 
+        : ["Communication", "Teamwork", "Problem Solving", "Time Management", "Adaptability"].map(name => ({
+            skill_name: name,
+            category: 'Soft'
+        }));
+    const unevaluatedSoftSkills = SOFT_SKILLS_LIST.filter(
+        ss => !skills.some(s => s.name.toLowerCase() === ss.skill_name.toLowerCase())
     );
     const allSoftAnswered = unevaluatedSoftSkills.length > 0 &&
-        unevaluatedSoftSkills.every(ss => softSkillAnswers[ss] !== undefined);
+        unevaluatedSoftSkills.every(ss => softSkillAnswers[ss.skill_name] !== undefined);
 
     // --- VOICE RECORDING LOGIC ---
     const startSoftRecording = async (index) => {
@@ -813,6 +847,14 @@ ${caseStudyAnswers.testing_edge_cases}`;
             { blob: null, url: null, isRecording: false, status: 'idle' },
             { blob: null, url: null, isRecording: false, status: 'idle' }
         ]);
+        
+        // Reset Technical states too
+        setTechFlowActive(false);
+        setTechQuestions([]);
+        setTechAnswers({});
+        setTechResult(null);
+        setActiveTechSkill("");
+        
         navigate('/assessment'); // Removes query param, returns to hub
     };
 
@@ -906,7 +948,10 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                     </div>
                                                 )}
                                             </div>
-                                            <div style={{ marginTop: '2.5rem', display: 'flex', justifyContent: 'center' }}>
+                                            <div style={{ marginTop: '2.5rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+                                                <Button variant="outline" onClick={() => startTechnicalAssessment(activeTechSkill)} style={{ padding: '0.75rem 1.5rem' }}>
+                                                    Retake Assessment
+                                                </Button>
                                                 <Button onClick={() => {
                                                     setTechResult(null);
                                                     setTechFlowActive(false);
@@ -1152,12 +1197,12 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                                                 {activeTab === 'technical' && (
                                                     <div>
-                                                        {(!userMajor || userMajor.toLowerCase() === 'general') ? (
+                                                        {!userMajor || userMajor === 'Not specified' ? (
                                                             <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
                                                                 <AlertCircle size={40} color="var(--color-warning)" style={{ margin: '0 auto 1rem auto' }} />
                                                                 <h4 style={{ marginBottom: '0.5rem', fontSize: '1.25rem' }}>Specialization Required</h4>
                                                                 <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', maxWidth: '400px', margin: '0 auto 1.5rem auto' }}>
-                                                                    You must select an IT Specialization in your profile to access matched assessments.
+                                                                    You must select an IT Specialization in your profile to access technical assessments.
                                                                 </p>
                                                                 <Button onClick={() => window.location.href = '/profile'}>Update Profile Details</Button>
                                                             </div>
@@ -1173,7 +1218,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                                 <div>
                                                                     <p style={{ fontSize: '0.95rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>Select a technical skill to begin the assessment flow.</p>
                                                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.85rem' }}>
-                                                                        {dbSkillsList.filter(s => s.category !== 'Soft').map(skill => {
+                                                                        {availableSkills.filter(s => s.category !== 'Soft').map(skill => {
                                                                             const skillName = skill.skill_name || skill.name;
                                                                             const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === skillName.toLowerCase());
                                                                             return (
@@ -1200,14 +1245,15 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                             Select a core soft skill to begin your multi-scenario research-based evaluation.
                                                         </p>
                                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1rem' }}>
-                                                            {SOFT_SKILLS.map(softSkill => {
-                                                                const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === softSkill.toLowerCase());
+                                                            {SOFT_SKILLS_LIST.map(skill => {
+                                                                const skillName = skill.skill_name;
+                                                                const isAlreadyOwned = skills.some(s => s.name.toLowerCase() === skillName.toLowerCase());
                                                                 return (
                                                                     <button
-                                                                        key={softSkill}
+                                                                        key={skillName}
                                                                         onClick={() => {
                                                                             setIsModalOpen(false);
-                                                                            navigate(`/assessment?skill=${encodeURIComponent(softSkill)}`);
+                                                                            navigate(`/assessment?skill=${encodeURIComponent(skillName)}`);
                                                                         }}
                                                                         style={{
                                                                             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -1222,7 +1268,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                                     >
                                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                                                             {isAlreadyOwned ? <CheckCircle2 size={18} color="var(--color-success)" /> : <Target size={18} color="var(--color-primary)" />}
-                                                                            <span style={{ fontSize: '1rem', fontWeight: '600', color: isAlreadyOwned ? 'var(--color-text-muted)' : 'var(--color-text)' }}>{softSkill}</span>
+                                                                            <span style={{ fontSize: '1rem', fontWeight: '600', color: isAlreadyOwned ? 'var(--color-text-muted)' : 'var(--color-text)' }}>{skillName}</span>
                                                                         </div>
                                                                         {!isAlreadyOwned && <ChevronLeft size={16} style={{ transform: 'rotate(180deg)', color: 'var(--color-primary)' }} />}
                                                                     </button>
@@ -1350,7 +1396,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                     <div>
                         <h2 style={{ fontSize: '1.75rem', fontWeight: 700, margin: 0 }}>Skill Assessment</h2>
                         <p style={{ color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
-                            {activeSkillName} • {skillDetails.category}
+                            {activeSkillName} • {skillDetails?.category}
                         </p>
                     </div>
                 </div>
@@ -1397,7 +1443,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                 boxShadow: 'var(--shadow-sm)'
                             }}>
                                 <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--color-border)', marginBottom: '1.5rem' }}>
-                                    {skillDetails.category === 'Soft' ? (
+                                    {skillDetails?.category === 'Soft' ? (
                                         <div style={{ padding: '0.5rem 0', color: 'var(--color-primary)', fontWeight: '700', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                             <Target size={18} /> Unified Multi-Scenario Mode
                                         </div>
@@ -1772,7 +1818,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                             onClick={handleSubmitAssessment}
                                             disabled={
                                                 (submissionMode === 'quiz' && (quizLoading || quizAnswers.some(a => a === null))) ||
-                                                (isSoft ? 
+                                                (skillDetails?.category === 'Soft' ? 
                                                     scenarioModes.some((mode, idx) => mode === 'text' ? !softMultiAnswers[idx].trim() : !softRecordings[idx].blob) :
                                                     (submissionMode === 'text' ? !submission.trim() : 
                                                      submissionMode === 'voice' ? !audioBlob :
