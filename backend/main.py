@@ -13,7 +13,8 @@ from nltk.stem import WordNetLemmatizer
 import os
 import json
 import re
-
+from dotenv import load_dotenv
+load_dotenv()   # loads the .env file
 from upskill_service import generate_skill_analysis_and_plan
 import httpx
 
@@ -137,6 +138,7 @@ class UpskillPlanRequest(BaseModel):
     email: str
 
 app = FastAPI()
+
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -1200,7 +1202,6 @@ def score_technical_assessment(submission: TechAssessmentSubmission):
             status_code=404, 
             detail=f"No questions found for skill: {submission.skill_name}"
         )
-        
     total_score = 0
     per_question_scores = []
     
@@ -1260,18 +1261,7 @@ async def evaluate_case_study(
     import re
     
     def get_fallback_evaluation(text: str, skill: str, base_error: str = "") -> dict:
-        # Remove standard frontend headers to evaluate actual user input
-        clean_text = text
-        headers = [
-            "Problem Understanding:",
-            "Root Cause / Challenge Analysis:",
-            "Proposed Technical Solution:",
-            "Implementation Steps:",
-            "Testing, Edge Cases, and Improvements:"
-        ]
-        for h in headers:
-            clean_text = clean_text.replace(h, "")
-        clean_text = clean_text.strip()
+        clean_text = text.strip()
         
         score = 0
         feedback = ""
@@ -1282,15 +1272,15 @@ async def evaluate_case_study(
         else:
             words = clean_text.split()
             if len(clean_text) < 80:
-                score = 10
+                score = 0
                 feedback = "Answer is too short to accurately assess technical depth."
             elif len(words) > 0 and (len(set(words)) / len(words)) < 0.3:
-                score = 10
+                score = 0
                 feedback = "Answer contains too much repetition and lacks substantive technical explanation."
             else:
                 max_word_len = max((len(w) for w in words), default=0)
                 if max_word_len > 30 and "http" not in clean_text.lower():
-                    score = 10
+                    score = 0
                     feedback = "Answer appears to contain gibberish or nonsensical text."
                 else:
                     common_tech_terms = {
@@ -1306,8 +1296,8 @@ async def evaluate_case_study(
                     has_tech_term = any(term in text_lower for term in common_tech_terms)
                     
                     if not (has_skill_mention or has_tech_term):
-                        score = 25
-                        feedback = "Answer does not appear to mention relevant technical terms for the skill/scenario. It is too generic or unrelated."
+                        score = 0
+                        feedback = "Answer does not appear to mention relevant technical terms. It appears to be random or unrelated."
                     else:
                         score = 40
                         feedback = "Answer evaluated via heuristic rules due to AI unavailability. Contains basic technical elements but needs deeper review."
@@ -1315,13 +1305,10 @@ async def evaluate_case_study(
         if base_error:
             feedback = f"AI Error ({base_error}). " + feedback
             
-        section_score = score // 5
         return {
-            "problem_identification": section_score,
-            "solution_appropriateness": section_score,
-            "technical_depth": section_score,
-            "practical_application": section_score,
-            "clarity_and_evidence": section_score,
+            "q1_score": int(score * 0.3),
+            "q2_score": int(score * 0.3),
+            "q3_score": int(score * 0.4),
             "case_study_percentage": score,
             "level": "Beginner",
             "feedback": feedback
@@ -1346,27 +1333,23 @@ async def evaluate_case_study(
         prompt = f"""
         You are a senior technical architect. Evaluate the following case study answer for the skill: {skill_name}.
         
-        Answer Text:
+        Answer Text (Contains answers to 3 guiding questions):
         {case_study_text}
         {file_content}
         
-        Evaluate the submission against these 5 criteria (max 20 points each):
-        1. problem_identification: Did they accurately define the technical challenge?
-        2. solution_appropriateness: Is the proposed solution logical and correct?
-        3. technical_depth: Did they show deep understanding of the concepts?
-        4. practical_application: Is it a realistic, implementable approach?
-        5. clarity_and_evidence: Is the answer well-structured and supported (even if no file was uploaded)?
+        Evaluate the submission against the 3 questions provided in the Answer Text:
+        1. Question 1 (30 points max): Did they accurately address the first question?
+        2. Question 2 (30 points max): Is the answer to the second question logical and correct?
+        3. Question 3 (40 points max): Did they show deep understanding and address the third question effectively?
         
-        Important: Do NOT penalize the user simply for not uploading a file. If the text answer is strong and articulate, they can still score highly on 'clarity_and_evidence'.
+        Important: If the user entered random gibberish, nonsensical text, or completely irrelevant answers (e.g. "dkhad"), you MUST give a score of 0 for all questions. Do NOT give partial credit for random text. Do NOT penalize the user simply for not uploading a file. If the text answer is strong and articulate, they can still score highly.
         
         Return ONLY a raw JSON object with NO markdown formatting, NO backticks, NO extra text.
         Schema:
         {{
-          "problem_identification": integer(0-20),
-          "solution_appropriateness": integer(0-20),
-          "technical_depth": integer(0-20),
-          "practical_application": integer(0-20),
-          "clarity_and_evidence": integer(0-20),
+          "q1_score": integer(0-30),
+          "q2_score": integer(0-30),
+          "q3_score": integer(0-40),
           "case_study_percentage": integer(0-100),
           "level": "Beginner" | "Intermediate" | "Advanced",
           "feedback": "string"
@@ -1393,11 +1376,9 @@ async def evaluate_case_study(
         
         # Validation and normalization
         output = {
-            "problem_identification": int(ai_data.get("problem_identification", 0)),
-            "solution_appropriateness": int(ai_data.get("solution_appropriateness", 0)),
-            "technical_depth": int(ai_data.get("technical_depth", 0)),
-            "practical_application": int(ai_data.get("practical_application", 0)),
-            "clarity_and_evidence": int(ai_data.get("clarity_and_evidence", 0)),
+            "q1_score": int(ai_data.get("q1_score", 0)),
+            "q2_score": int(ai_data.get("q2_score", 0)),
+            "q3_score": int(ai_data.get("q3_score", 0)),
             "case_study_percentage": int(ai_data.get("case_study_percentage", 0)),
             "level": ai_data.get("level", "Beginner"),
             "feedback": ai_data.get("feedback", "No feedback provided.")
@@ -1564,7 +1545,13 @@ async def evaluate_voice_multi(
 
 # --- ENDPOINTS: UPSKILL PLAN ---
 
-
+@app.get("/api/debug-key")
+def debug_key():
+    import os
+    return {
+        "GOOGLE_API_KEY": bool(os.getenv("GOOGLE_API_KEY")),
+        "GEMINI_API_KEY": bool(os.getenv("GEMINI_API_KEY"))
+    }
 @app.get("/api/upskill-plan")
 def get_upskill_plan_endpoint(email: str):
     db = get_db()
@@ -1607,6 +1594,32 @@ async def generate_upskill_plan_endpoint(request: UpskillPlanRequest):
         )
 
     return plan
+@app.get("/api/case-study-scenario")
+def get_case_study_scenario(skill_name: str, major: Optional[str] = ""):
+    import re
+    import random
+    db = get_db()
+    collection = db["case_study_scenarios"]
+    
+    skill_regex = f"^{re.escape(skill_name.strip())}$"
+    
+    query = {"skill_name": {"$regex": skill_regex, "$options": "i"}}
+    if major:
+        major_regex = f"^{re.escape(major.strip())}$"
+        query["major"] = {"$regex": major_regex, "$options": "i"}
+        
+    scenarios = list(collection.find(query))
+    if not scenarios and major:
+        # Fallback to general skill match if specific major not found
+        scenarios = list(collection.find({"skill_name": {"$regex": skill_regex, "$options": "i"}}))
+        
+    if not scenarios:
+        raise HTTPException(status_code=404, detail="Case study scenario not found.")
+        
+    selected = random.choice(scenarios)
+    selected["_id"] = str(selected["_id"])
+    return selected
+
 @app.get("/api/market/top-skills")
 def get_top_skills():
     from datetime import datetime

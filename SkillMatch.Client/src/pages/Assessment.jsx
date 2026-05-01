@@ -10,7 +10,6 @@ import {
     Target
 } from 'lucide-react';
 import { getEvaluationForSkill, getShortEvaluationForSkill } from '../data/evaluationQuestions';
-import { getTechCaseStudyPrompt } from '../data/techCaseStudyPrompts';
 
 export const Assessment = () => {
     const navigate = useNavigate();
@@ -49,13 +48,7 @@ export const Assessment = () => {
     const [result, setResult] = useState(null);
     const [selectedFile, setSelectedFile] = useState(null);
     const [submissionMode, setSubmissionMode] = useState('text');
-    const [caseStudyAnswers, setCaseStudyAnswers] = useState({
-        problem_understanding: '',
-        root_cause: '',
-        proposed_solution: '',
-        implementation_steps: '',
-        testing_edge_cases: ''
-    });
+    const [caseStudyAnswers, setCaseStudyAnswers] = useState([]);
 
     // === VOICE RECORDING STATE ===
     const [isRecording, setIsRecording] = useState(false);
@@ -77,6 +70,7 @@ export const Assessment = () => {
     const [activeTechSkill, setActiveTechSkill] = useState("");
     const [caseStudyText, setCaseStudyText] = useState("");
     const [caseStudyFile, setCaseStudyFile] = useState(null);
+    const [caseStudyScenario, setCaseStudyScenario] = useState(null);
 
     const [softMultiAnswers, setSoftMultiAnswers] = useState(["", "", ""]);
     const [softRecordings, setSoftRecordings] = useState([
@@ -344,19 +338,28 @@ export const Assessment = () => {
         setTechAnswers({});
         setTechResult(null);
         setCurrentTechIdx(0);
-        setCaseStudyAnswers({
-            problem_understanding: '',
-            root_cause: '',
-            proposed_solution: '',
-            implementation_steps: '',
-            testing_edge_cases: ''
-        });
+        setCaseStudyScenario(null);
+        setCaseStudyAnswers([]);
         setCaseStudyFile(null);
 
         try {
             const majorParam = userMajor ? `&major=${encodeURIComponent(userMajor)}` : '';
             const res = await fetch(`${API_BASE_URL}/api/technical-questions?skill_name=${encodeURIComponent(skillName)}${majorParam}`);
             const data = await res.json();
+            
+            try {
+                const caseRes = await fetch(`${API_BASE_URL}/api/case-study-scenario?skill_name=${encodeURIComponent(skillName)}${majorParam}`);
+                if (caseRes.ok) {
+                    const caseData = await caseRes.json();
+                    setCaseStudyScenario(caseData);
+                    if (caseData.guiding_questions && Array.isArray(caseData.guiding_questions)) {
+                        setCaseStudyAnswers(new Array(caseData.guiding_questions.length).fill(""));
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to fetch case study scenario:", err);
+            }
+
             if (data.questions && data.questions.length > 0) {
                 setTechQuestions(data.questions);
                 setTechFlowActive(true);
@@ -390,20 +393,12 @@ export const Assessment = () => {
             const rubricData = await res.json();
 
             // 2. Submit Case Study
-            const structuredCaseStudyText = `Problem Understanding:
-${caseStudyAnswers.problem_understanding}
-
-Root Cause / Challenge Analysis:
-${caseStudyAnswers.root_cause}
-
-Proposed Technical Solution:
-${caseStudyAnswers.proposed_solution}
-
-Implementation Steps:
-${caseStudyAnswers.implementation_steps}
-
-Testing, Edge Cases, and Improvements:
-${caseStudyAnswers.testing_edge_cases}`;
+            let structuredCaseStudyText = "";
+            if (caseStudyScenario?.guiding_questions) {
+                structuredCaseStudyText = caseStudyScenario.guiding_questions.map((q, i) => `${q}:\n${caseStudyAnswers[i] || ''}`).join('\n\n');
+            } else {
+                structuredCaseStudyText = caseStudyAnswers.join('\n\n');
+            }
 
             const formData = new FormData();
             formData.append('skill_name', activeTechSkill);
@@ -1013,60 +1008,42 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                     ) : (
                                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                                                             <div style={{ background: 'rgba(59, 130, 246, 0.05)', padding: '1.5rem', borderRadius: 'var(--radius-md)', borderLeft: '4px solid var(--color-primary)' }}>
-                                                                <h5 style={{ margin: '0 0 0.5rem 0', color: 'var(--color-primary)' }}>Problem Scenario Answer</h5>
+                                                                <h5 style={{ margin: '0 0 0.5rem 0', color: 'var(--color-primary)' }}>{caseStudyScenario?.scenario_title || "Problem Scenario Answer"}</h5>
                                                                 <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--color-text-muted)', lineHeight: '1.6' }}>
-                                                                    <strong>{activeTechSkill}: </strong> {getTechCaseStudyPrompt(activeTechSkill)}
+                                                                    <strong>{activeTechSkill}: </strong> {caseStudyScenario?.scenario_text || "Please provide a detailed technical case study analysis for this skill."}
                                                                     <br /><br />
                                                                     You may optionally upload supporting diagrams or code.
                                                                 </p>
                                                             </div>
 
                                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                                                <div>
-                                                                    <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>1. Problem Understanding</label>
-                                                                    <textarea
-                                                                        placeholder="Explain what the problem is and why it matters."
-                                                                        value={caseStudyAnswers.problem_understanding}
-                                                                        onChange={(e) => setCaseStudyAnswers(prev => ({ ...prev, problem_understanding: e.target.value }))}
-                                                                        style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
-                                                                    />
-                                                                </div>
-                                                                <div>
-                                                                    <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>2. Root Cause / Challenge Analysis</label>
-                                                                    <textarea
-                                                                        placeholder="Explain the main technical cause or challenge in this scenario."
-                                                                        value={caseStudyAnswers.root_cause}
-                                                                        onChange={(e) => setCaseStudyAnswers(prev => ({ ...prev, root_cause: e.target.value }))}
-                                                                        style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
-                                                                    />
-                                                                </div>
-                                                                <div>
-                                                                    <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>3. Proposed Technical Solution</label>
-                                                                    <textarea
-                                                                        placeholder="Describe your main technical solution."
-                                                                        value={caseStudyAnswers.proposed_solution}
-                                                                        onChange={(e) => setCaseStudyAnswers(prev => ({ ...prev, proposed_solution: e.target.value }))}
-                                                                        style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
-                                                                    />
-                                                                </div>
-                                                                <div>
-                                                                    <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>4. Implementation Steps</label>
-                                                                    <textarea
-                                                                        placeholder="List the practical steps, workflow, or pseudo-code to implement your solution."
-                                                                        value={caseStudyAnswers.implementation_steps}
-                                                                        onChange={(e) => setCaseStudyAnswers(prev => ({ ...prev, implementation_steps: e.target.value }))}
-                                                                        style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
-                                                                    />
-                                                                </div>
-                                                                <div>
-                                                                    <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>5. Testing, Edge Cases, and Improvements</label>
-                                                                    <textarea
-                                                                        placeholder="Explain how you would test the solution and handle edge cases."
-                                                                        value={caseStudyAnswers.testing_edge_cases}
-                                                                        onChange={(e) => setCaseStudyAnswers(prev => ({ ...prev, testing_edge_cases: e.target.value }))}
-                                                                        style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
-                                                                    />
-                                                                </div>
+                                                                {caseStudyScenario?.guiding_questions ? (
+                                                                    caseStudyScenario.guiding_questions.map((q, idx) => (
+                                                                        <div key={idx}>
+                                                                            <label style={{ fontWeight: '600', marginBottom: '0.5rem', display: 'block', fontSize: '0.95rem' }}>{idx + 1}. {q}</label>
+                                                                            <textarea
+                                                                                placeholder="Your answer..."
+                                                                                value={caseStudyAnswers[idx] || ''}
+                                                                                onChange={(e) => {
+                                                                                    const newAnswers = [...caseStudyAnswers];
+                                                                                    newAnswers[idx] = e.target.value;
+                                                                                    setCaseStudyAnswers(newAnswers);
+                                                                                }}
+                                                                                style={{ width: '100%', minHeight: '80px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
+                                                                            />
+                                                                        </div>
+                                                                    ))
+                                                                ) : (
+                                                                    <div>
+                                                                        <p style={{ color: 'var(--color-text-muted)' }}>No guiding questions found for this scenario.</p>
+                                                                        <textarea
+                                                                            placeholder="Provide your analysis..."
+                                                                            value={caseStudyAnswers[0] || ''}
+                                                                            onChange={(e) => setCaseStudyAnswers([e.target.value])}
+                                                                            style={{ width: '100%', minHeight: '120px', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.95rem', resize: 'vertical' }}
+                                                                        />
+                                                                    </div>
+                                                                )}
                                                             </div>
 
                                                             <div style={{ border: '1px dashed var(--color-border)', padding: '1.5rem', borderRadius: 'var(--radius-md)', textAlign: 'center', background: 'var(--color-white)' }}>
@@ -1099,7 +1076,7 @@ ${caseStudyAnswers.testing_edge_cases}`;
                                                         {currentTechIdx === techQuestions.length ? (
                                                             <Button
                                                                 onClick={submitTechnicalAssessment}
-                                                                disabled={!caseStudyAnswers.problem_understanding.trim() || !caseStudyAnswers.root_cause.trim() || !caseStudyAnswers.proposed_solution.trim() || !caseStudyAnswers.implementation_steps.trim() || !caseStudyAnswers.testing_edge_cases.trim() || techLoading}
+                                                                disabled={caseStudyAnswers.length === 0 || caseStudyAnswers.some(ans => !ans || !ans.trim()) || techLoading}
                                                             >
                                                                 {techLoading ? <Loader2 className="animate-spin" size={18} /> : 'Submit Full Assessment'}
                                                             </Button>

@@ -4,7 +4,8 @@ import json
 import logging
 import httpx
 from database import get_db
-
+from dotenv import load_dotenv
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
