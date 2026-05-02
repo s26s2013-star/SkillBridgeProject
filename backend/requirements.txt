@@ -1,0 +1,16 @@
+sentence-transformers>=3.0.0
+scikit-learn
+PyPDF2==3.0.1
+python-magic==0.4.27
+fastapi
+uvicorn
+pymongo
+pandas
+certifi
+python-multipart
+google-generativeai
+numpy
+python-docx
+google-api-python-client
+requests
+python-dotenv
