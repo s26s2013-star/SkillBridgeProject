@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from typing import Any, Dict, Optional, List
 from fastapi.middleware.cors import CORSMiddleware
-from database import get_db
+from database import get_db, get_user_profile, get_all_jobs, exact_skill_match, save_profile_summary
 import random
 import spacy
 import nltk
@@ -13,8 +13,41 @@ from nltk.stem import WordNetLemmatizer
 import os
 import json
 import re
+import google.generativeai as genai
+import logging
 from dotenv import load_dotenv
+
 load_dotenv()   # loads the .env file
+logger = logging.getLogger(__name__)
+
+def call_gemini(prompt: str, mime_type: str = None, data: bytes = None) -> str:
+    """Helper to call Gemini with model fallbacks."""
+    # Re-load dotenv to catch any manual changes during development
+    load_dotenv()
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("GEMINI_API_KEY is missing.")
+        return None
+        
+    genai.configure(api_key=api_key)
+    # Most reliable models to try in sequence
+    models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+    
+    for model_name in models:
+        try:
+            logger.info(f"Attempting Gemini call with model: {model_name}")
+            model = genai.GenerativeModel(model_name)
+            if data and mime_type:
+                response = model.generate_content([prompt, {"mime_type": mime_type, "data": data}])
+            else:
+                response = model.generate_content(prompt)
+            
+            if response and response.text:
+                return response.text.strip()
+        except Exception as e:
+            logger.warning(f"Model {model_name} failed: {e}")
+            continue
+    return None
 from upskill_service import generate_skill_analysis_and_plan
 import httpx
 
@@ -694,32 +727,12 @@ async def evaluate_uploaded_file(
     
     if api_key:
         try:
-            import google.generativeai as genai
-            
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            
-            # Decode file contents safely
-            text_content = contents.decode('utf-8', errors='ignore')
-            
-            prompt = f"""
-You are an expert technical assessor.
-Evaluate the following work sample for the skill: {skill_name}.
-Read the uploaded file content and return your evaluation in a structured JSON format.
-
-{text_content}
-
-Return ONLY a valid JSON object matching this schema exactly, with NO markdown formatting, NO backticks, and NO extra text:
-{{
-  "score": integer between 0 and 100,
-  "level": "Beginner" or "Intermediate" or "Advanced",
-  "feedback": "A concise paragraph explaining strengths, weaknesses, and areas for improvement."
-}}
-"""
-            response = model.generate_content(prompt)
-            
+            ai_response = call_gemini(prompt)
+            if not ai_response:
+                raise ValueError("All Gemini models failed to evaluate the file.")
+                
             # Clean possible markdown formatting
-            raw_text = response.text.replace('```json', '').replace('```', '').strip()
+            raw_text = ai_response.replace('```json', '').replace('```', '').strip()
             ai_data = json.loads(raw_text)
             
             total_score = int(ai_data.get("score", 40))
@@ -802,30 +815,11 @@ async def get_quiz_questions(skill_name: str, category: str = "Technical"):
         return {"skill_name": skill_name, "questions": dummy}
         
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        type_instruction = ""
-        example_instruction = ""
-        if category.lower() == "soft":
-            type_instruction = "This is a SOFT skill. The statements must focus on behavior, situational awareness, interpersonal dynamics, and communication."
-            example_instruction = '["I actively listen to colleagues to ensure I fully understand their perspective before responding.", "I navigate miscommunications constructively without assigning blame."]'
-        else:
-            type_instruction = "This is a TECHNICAL skill. The statements must focus on practical logic, tool understanding, debugging ability, and technical execution."
-            example_instruction = f'["I can comfortably debug complex logic issues in {skill_name}.", "I understand and apply industry standard best practices when utilizing {skill_name}."]'
-        
-        prompt = f"""
-Generate exactly 10 UNIQUE, non-repetitive self-assessment statements evaluating proficiency in the skill: '{skill_name}'.
-{type_instruction}
-The statements should be written in the first person (e.g., "I can...", "I do...").
-They must scale from beginner fundamentals to advanced concepts to accurately test depth of knowledge. Do not use generic filler questions.
-Return ONLY a raw JSON array of exactly 10 strings. No markdown, no HTML, no extra text.
-Example format:
-{example_instruction}
-"""
-        response = model.generate_content(prompt)
-        raw_text = response.text.replace('```json', '').replace('```', '').strip()
+        ai_response = call_gemini(prompt)
+        if not ai_response:
+             raise ValueError("All Gemini models failed to generate quiz.")
+             
+        raw_text = ai_response.replace('```json', '').replace('```', '').strip()
         questions = json.loads(raw_text)
         
         if len(questions) < 10:
@@ -935,9 +929,11 @@ async def evaluate_text_assessment(
             status = "Pending"
         else:
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                ai_response = call_gemini(prompt)
+                if not ai_response:
+                    raise ValueError("All Gemini models failed to evaluate text assessment.")
+                    
+                raw_text = ai_response.replace('```json', '').replace('```', '').strip()
                 
                 prompt = f"""
                 You are an expert HR and technical recruiter. Evaluate this soft skills submission for: {skill_name}.
@@ -1244,15 +1240,11 @@ async def evaluate_case_study(
         }}
         """
         
-        try:
-            model = genai.GenerativeModel('gemini-1.5-flash-latest')
-            response = model.generate_content(prompt)
-        except Exception as e:
-            print(f"Failed with gemini-1.5-flash-latest, falling back to gemini-1.5-flash. Error: {e}")
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(prompt)
+        ai_response = call_gemini(prompt)
+        if not ai_response:
+            raise ValueError("All Gemini models failed to evaluate case study.")
             
-        text = response.text
+        text = ai_response
         
         # Robust JSON extraction: Find first '{' and last '}'
         json_match = re.search(r'\{.*\}', text, re.DOTALL)
@@ -1362,13 +1354,12 @@ async def evaluate_voice_multi(
     for file in files:
         contents = await file.read()
         try:
-            # but Gemini 1.5 Flash supports audio.
-            response = model.generate_content([
+            ai_response = call_gemini(
                 "Transcribe this audio clip exactly. If it is silent or junk, return only '---SILENT---'.",
-                {"mime_type": file.content_type, "data": contents}
-            ])
-            text = response.text.strip()
-            transcriptions.append(text if text else "---SILENT---")
+                mime_type=file.content_type,
+                data=contents
+            )
+            transcriptions.append(ai_response if ai_response else "---SILENT---")
         except Exception as e:
             print(f"Transcription error for {file.filename}: {e}")
             transcriptions.append("---SILENT---")
@@ -1473,6 +1464,31 @@ async def generate_upskill_plan_endpoint(request: UpskillPlanRequest):
         )
 
     return plan
+@app.get("/api/debug-gemini")
+def debug_gemini():
+    try:
+        import google.generativeai as genai
+        api_key = os.getenv("GEMINI_API_KEY")
+        genai.configure(api_key=api_key)
+        
+        # List ALL available models
+        available_models = []
+        for model in genai.list_models():
+            if 'generateContent' in model.supported_generation_methods:
+                available_models.append({
+                    'name': model.name,
+                    'display_name': model.display_name,
+                    'supported': 'generateContent' in model.supported_generation_methods
+                })
+        
+        return {
+            "api_key_set": bool(api_key),
+            "available_models": available_models[:10],  # First 10
+            "recommended": ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"]
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/api/case-study-scenario")
 def get_case_study_scenario(skill_name: str, major: Optional[str] = ""):
     import re
@@ -1607,3 +1623,138 @@ def get_top_skills():
             "message": "Live Oman job market data is unavailable.",
             "details": str(e)
         }
+
+# Cache dict
+job_matches_cache = {}
+import time
+
+@app.post("/api/profile-summary")
+def create_profile_summary(email: str):
+    db = get_db()
+    user = db["users"].find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    tech_skills = {}
+    soft_skills = {}
+    soft_names = ["Communication", "Teamwork", "Problem Solving", "Time Management", "Adaptability"]
+    
+    skills_list = user.get("skills", [])
+    if not skills_list:
+        return {"error": True, "message": "Complete assessment"}
+        
+    for skill in skills_list:
+        name = skill.get("name") if isinstance(skill, dict) else skill
+        score = skill.get("progress", 0) if isinstance(skill, dict) else 0
+        if name in soft_names:
+            soft_skills[name] = score
+        else:
+            tech_skills[name] = score
+            
+    summary = {
+        "email": email,
+        "major": user.get("major", ""),
+        "tech_skills": tech_skills,
+        "soft_skills": soft_skills,
+        "last_updated": datetime.utcnow().isoformat()
+    }
+    
+    save_profile_summary(email, summary)
+    return {"message": "Profile summary created", "summary": summary}
+
+@app.get("/api/job-matches")
+def get_job_matches(email: str):
+    # 1. Get user profile
+    profile = get_user_profile(email)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Complete assessment")
+        
+    # Cache Check (1 hour)
+    current_time = time.time()
+    if email in job_matches_cache:
+        cached_time, cached_results = job_matches_cache[email]
+        if current_time - cached_time < 3600:
+            return cached_results
+            
+    # 2. Calculate match_score for all 40 jobs  
+    jobs = get_all_jobs()
+    scored_jobs = []
+    
+    tech_skills = profile.get("tech_skills", {})
+    soft_skills = profile.get("soft_skills", {})
+    major = profile.get("major", "")
+    
+    for job in jobs:
+        score = 0
+        breakdown = {
+            "tech": 0, "tech_details": [],
+            "major": 0, "major_details": [],
+            "soft": 0, "soft_details": [],
+            "exp": 0, "exp_details": []
+        }
+        
+        # 40pts: Tech Match
+        job_key_skills = job.get("Key_Skills", "")
+        tech_matched_count = 0
+        for skill_name in tech_skills.keys():
+            if exact_skill_match(job_key_skills, skill_name):
+                if tech_matched_count < 2:
+                    breakdown["tech"] += 20
+                    tech_matched_count += 1
+                breakdown["tech_details"].append(f"\u2713 {skill_name}")
+                
+        score += breakdown["tech"]
+        
+        # 30pts: Major Match
+        industry = job.get("Industry", "")
+        if major and exact_skill_match(industry, major):
+            breakdown["major"] += 30
+            breakdown["major_details"].append(f"\u2713 {major}")
+            score += 30
+            
+        # 25pts: Soft Skills
+        job_soft_skills = job.get("Soft_Skills", "")
+        soft_matched_count = 0
+        for skill_name in soft_skills.keys():
+            if exact_skill_match(job_soft_skills, skill_name):
+                if soft_matched_count < 5:
+                    breakdown["soft"] += 5
+                    soft_matched_count += 1
+                breakdown["soft_details"].append(f"\u2713 {skill_name}")
+                
+        score += breakdown["soft"]
+                    
+        # 5pts: Experience
+        exp_req = job.get("Experience_Required", "")
+        job_title = job.get("Job_Title", "")
+        if "0-3" in exp_req or "entry" in job_title.lower() or "junior" in job_title.lower():
+            breakdown["exp"] += 5
+            breakdown["exp_details"].append(f"\u2713 Entry-level")
+            score += 5
+            
+        # Format output
+        job_info = {
+            "Job_Title": job.get("Job_Title", ""),
+            "Company": job.get("Company", ""),
+            "Location": job.get("Location", "")
+        }
+        
+        scored_jobs.append({
+            "match_score": min(100, score),
+            "breakdown": breakdown,
+            "job": job_info,
+            "apply_url": job.get("Source_URL", "https://jobs.com")
+        })
+        
+    # 3. Return TOP 3
+    scored_jobs.sort(key=lambda x: x["match_score"], reverse=True)
+    top_3 = scored_jobs[:3]
+    
+    for idx, item in enumerate(top_3):
+        item["rank"] = idx + 1
+        
+    # Save to cache
+    job_matches_cache[email] = (current_time, top_3)
+    
+    return top_3
+

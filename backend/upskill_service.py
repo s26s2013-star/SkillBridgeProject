@@ -8,8 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+# Configuration is now handled inside generate_skill_analysis_and_plan
 
 # ─────────────────────────────────────────────────────────────
 # CURATED COURSE MAP
@@ -217,6 +216,7 @@ CURATED_COURSES = {
     ],
 }
 
+
 def get_curated_resources(skill_name: str) -> list:
     """Returns curated course list for a skill. Falls back to partial match if exact not found."""
     if skill_name in CURATED_COURSES:
@@ -333,7 +333,40 @@ You are an expert career coach and technical mentor for IT graduates in Oman.
 """
 
     try:
-        response = gemini_model.generate_content(prompt)
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            logger.error("GEMINI_API_KEY is missing in environment.")
+            return None
+            
+        genai.configure(api_key=api_key)
+        
+        # ✅ FIXED: Use YOUR ACTUAL available models from debug output
+        models_to_try = [
+            'gemini-2.5-flash',           # #1 Best (fast + capable)
+            'gemini-2.0-flash',           # #2 Reliable fallback  
+            'gemini-2.5-pro',             # #3 High quality
+            'gemini-2.0-flash-001',       # #4 Stable preview
+        ]
+        
+        response = None
+        last_error = ""
+        
+        for model_name in models_to_try:
+            try:
+                logger.info(f"🔄 Attempting generation with model: {model_name}")
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                logger.info(f"✅ SUCCESS with model: {model_name}")
+                break
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"❌ Model {model_name} failed: {e}")
+                continue
+        
+        if not response or not response.text:
+            logger.error(f"🚨 All models failed. Last error: {last_error}")
+            return None
+            
         raw = response.text.strip()
         if raw.startswith("```json"):
             raw = raw[7:]

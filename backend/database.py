@@ -200,6 +200,30 @@ def seed_market_data():
         raise
 
 
+import re
+
+def get_user_profile(email):
+    db = get_db()
+    return db["user_profiles"].find_one({"email": email})
+
+def get_all_jobs():
+    db = get_db()
+    return list(db["job_market"].find({}))
+
+def exact_skill_match(job_text, skill_name):
+    if not job_text or not isinstance(job_text, str) or not skill_name:
+        return False
+    # Simple case-insensitive exact substring search
+    return skill_name.lower() in job_text.lower()
+
+def save_profile_summary(email, summary):
+    db = get_db()
+    db["user_profiles"].update_one(
+        {"email": email},
+        {"$set": summary},
+        upsert=True
+    )
+
 if __name__ == "__main__":
     create_indexes()
 
