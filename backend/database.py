@@ -250,3 +250,5 @@ if __name__ == "__main__":
             print("Usage: python database.py [skills|jobs|tech_qs|tech_qs_reset|all|all_reset]")
     else:
         logger.info("No command provided. Seeder did not run automatically.")
+
+

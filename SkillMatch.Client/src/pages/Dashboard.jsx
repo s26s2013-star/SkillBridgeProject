@@ -247,8 +247,7 @@ export const Dashboard = () => {
                                         <div className="loading-market">Loading insights...</div>
                                     ) : marketError || !marketData ? (
                                         <div className="error-market">Data currently unavailable</div>
-                                    ) : (
-                                        marketData.top_skills.slice(0, 8).map((item, i) => {
+                                    ) : ((marketData?.top_skills || []).slice(0, 8).map((item, i) => {
                                             const pct = Math.round((item.demand_count / maxDemand) * 60) + 10;
                                             return (
                                                 <div key={item.skill} className="skill-row">

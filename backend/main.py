@@ -13,6 +13,8 @@ from nltk.stem import WordNetLemmatizer
 import os
 import json
 import re
+
+# pyrefly: ignore [missing-import]
 import google.generativeai as genai
 import logging
 from dotenv import load_dotenv
@@ -31,7 +33,7 @@ def call_gemini(prompt: str, mime_type: str = None, data: bytes = None) -> str:
         
     genai.configure(api_key=api_key)
     # Most reliable models to try in sequence
-    models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+    models = ['gemini-3.1-pro-preview', 'gemini-flash-latest', 'gemini-pro-latest']
     
     for model_name in models:
         try:
@@ -929,12 +931,6 @@ async def evaluate_text_assessment(
             status = "Pending"
         else:
             try:
-                ai_response = call_gemini(prompt)
-                if not ai_response:
-                    raise ValueError("All Gemini models failed to evaluate text assessment.")
-                    
-                raw_text = ai_response.replace('```json', '').replace('```', '').strip()
-                
                 prompt = f"""
                 You are an expert HR and technical recruiter. Evaluate this soft skills submission for: {skill_name}.
                 
@@ -963,8 +959,10 @@ async def evaluate_text_assessment(
                   "feedback": "Concise paragraph evaluating the behavioral response."
                 }}
                 """
-                response = model.generate_content(prompt)
-                raw_text = response.text.replace('```json', '').replace('```', '').strip()
+                response_text = call_gemini(prompt)
+                if not response_text:
+                    raise ValueError("All Gemini models failed to evaluate text assessment.")
+                raw_text = response_text.replace('```json', '').replace('```', '').strip()
                 ai_data = json.loads(raw_text)
                 
                 total_score = int(ai_data.get("final_score", 0))
@@ -1215,28 +1213,48 @@ async def evaluate_case_study(
                 print(f"File read error: {e}")
 
         prompt = f"""
-        You are a senior technical architect. Evaluate the following case study answer for the skill: {skill_name}.
-        
-        Answer Text (Contains answers to 3 guiding questions):
-        {case_study_text}
+        You are an expert IT Technical Interviewer and Psychometric Evaluator. Your job is to objectively grade a graduate's answer to a {skill_name} case study.
+
+        [CASE STUDY CONTEXT]
+        Evaluate the candidate's response based on the fundamental principles of {skill_name}.
         {file_content}
-        
-        Evaluate the submission against the 3 questions provided in the Answer Text:
-        1. Question 1 (30 points max): Did they accurately address the first question?
-        2. Question 2 (30 points max): Is the answer to the second question logical and correct?
-        3. Question 3 (40 points max): Did they show deep understanding and address the third question effectively?
-        
-        Important: If the user entered random gibberish, nonsensical text, or completely irrelevant answers (e.g. "dkhad"), you MUST give a score of 0 for all questions. Do NOT give partial credit for random text. Do NOT penalize the user simply for not uploading a file. If the text answer is strong and articulate, they can still score highly.
-        
-        Return ONLY a raw JSON object with NO markdown formatting, NO backticks, NO extra text.
-        Schema:
+
+        [GRADING RUBRIC - MAX 100 POINTS]
+        1. Main Problem Identification (Max 30 points):
+           - Must identify the core issue or primary objective relevant to the scenario (30 pts)
+           - If they only focus on superficial symptoms (10 pts)
+
+        2. Root Cause Analysis (Max 30 points):
+           - Mentions underlying technical architecture or conceptual frameworks (15 pts)
+           - Mentions specific mechanisms, protocols, or methodologies (15 pts)
+
+        3. Technical Solution (Max 40 points):
+           - Proposes a comprehensive, industry-standard solution (20 pts)
+           - Proposes specific, actionable steps or tools (20 pts)
+
+        [ANCHOR EXAMPLES FOR REFERENCE]
+        - Excellent Answer (90-100 pts): Mentions core architecture, root cause, lack of internal controls, and proposes a comprehensive, industry-standard solution.
+        - Average Answer (50-70 pts): Focuses a bit too much on superficial elements, but correctly suggests some basic mitigation or theoretical concepts.
+        - Poor Answer (0-40 pts): Focuses entirely on irrelevant details. Suggests non-technical or entirely incorrect approaches. Misses the core technical aspect entirely.
+
+        [CANDIDATE'S ANSWER TO EVALUATE]
+        "{case_study_text}"
+
+        Important: If the candidate's answer is random gibberish, completely irrelevant, or very short, you MUST give a score of 0 for all sections and explain why in the justification.
+
+        [OUTPUT FORMAT]
+        You must respond ONLY in the following JSON format:
         {{
-          "q1_score": integer(0-30),
-          "q2_score": integer(0-30),
-          "q3_score": integer(0-40),
-          "case_study_percentage": integer(0-100),
-          "level": "Beginner" | "Intermediate" | "Advanced",
-          "feedback": "string"
+          "scores": {{
+            "problem_identification": 0,
+            "root_cause_analysis": 0,
+            "technical_solution": 0,
+            "total_score": 0
+          }},
+          "market_readiness_level": "Beginner",
+          "justification": "Detailed explanation of why points were awarded or deducted.",
+          "skills_to_develop": ["Skill 1", "Skill 2"],
+          "feedback_for_graduate": "Constructive feedback written directly to the graduate on how to improve."
         }}
         """
         
@@ -1254,14 +1272,16 @@ async def evaluate_case_study(
         raw_json = json_match.group(0)
         ai_data = json.loads(raw_json)
         
-        # Validation and normalization
+        scores = ai_data.get("scores", {})
+        
+        # Validation and normalization mapped to the frontend's expected format
         output = {
-            "q1_score": int(ai_data.get("q1_score", 0)),
-            "q2_score": int(ai_data.get("q2_score", 0)),
-            "q3_score": int(ai_data.get("q3_score", 0)),
-            "case_study_percentage": int(ai_data.get("case_study_percentage", 0)),
-            "level": ai_data.get("level", "Beginner"),
-            "feedback": ai_data.get("feedback", "No feedback provided.")
+            "q1_score": int(scores.get("problem_identification", 0)),
+            "q2_score": int(scores.get("root_cause_analysis", 0)),
+            "q3_score": int(scores.get("technical_solution", 0)),
+            "case_study_percentage": int(scores.get("total_score", 0)),
+            "level": ai_data.get("market_readiness_level", "Beginner"),
+            "feedback": ai_data.get("feedback_for_graduate", "No feedback provided.")
         }
         
         return output
@@ -1346,7 +1366,7 @@ async def evaluate_voice_multi(
 
     import google.generativeai as genai
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-flash-latest')
     
     transcriptions = []
     
