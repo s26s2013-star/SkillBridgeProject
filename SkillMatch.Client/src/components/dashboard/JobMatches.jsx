@@ -80,9 +80,16 @@ const JobMatches = ({ email }) => {
         {jobs.map((match) => (
           <div key={match.rank} className="jm-card">
             {/* Score Ribbon */}
-            <div className="jm-card-score">
-              <span>{match.match_score}%</span>
-              <span className="jm-fire">🔥</span>
+            <div className="jm-card-score" style={{ flexDirection: 'column', padding: '8px 16px', gap: '2px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>{match.match_score}%</span>
+                <span className="jm-fire">🔥</span>
+              </div>
+              {match.match_category && (
+                <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.5px', opacity: 0.95, fontWeight: 700 }}>
+                  {match.match_category}
+                </span>
+              )}
             </div>
             
             <div className="jm-card-content">
@@ -92,6 +99,13 @@ const JobMatches = ({ email }) => {
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
                   {match.job.Company} • {match.job.Location}
                 </p>
+                
+                {match.match_message && (
+                  <div style={{ background: 'rgba(111, 179, 167, 0.1)', color: '#266055', padding: '10px 14px', borderRadius: '8px', fontSize: '0.85rem', marginBottom: '1.25rem', fontWeight: 500, display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginTop: '2px', flexShrink: 0 }}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+                    <span style={{ lineHeight: '1.4' }}>{match.match_message}</span>
+                  </div>
+                )}
                 
                 <div className="jm-breakdown-area">
                   <p className="jm-skills-label">Explainable Match Breakdown:</p>
@@ -133,6 +147,13 @@ const JobMatches = ({ email }) => {
                   Apply Now 
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"></path><path d="M12 5l7 7-7 7"></path></svg>
                 </a>
+                
+                {(match.match_category === 'Growth Match' || match.match_category === 'Explore Match') && (
+                  <a href="/upskill-plan" className="jm-btn-learn">
+                    Go to Learning Plan
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+                  </a>
+                )}
               </div>
             </div>
           </div>
@@ -369,6 +390,31 @@ const styles = `
   background: #255A66;
   transform: translateY(-2px);
   box-shadow: 0 8px 20px rgba(46, 111, 126, 0.3);
+}
+
+.jm-btn-learn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  color: #2E6F7E;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 12px;
+  border: 1px solid #E5EEF0;
+  border-radius: 14px;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.jm-btn-learn:hover {
+  background: #F8FAFC;
+  border-color: #6FB3A7;
+  color: #266055;
+  transform: translateY(-2px);
 }
 
 .jm-error-state {

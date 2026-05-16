@@ -96,18 +96,19 @@ def calculate_nlp_score(user_answers: List[str], scenario_keywords: List[List[st
         matched_kws = []
         for kw in keywords:
             kw_lemma = lemmatizer.lemmatize(kw.lower())
-            if kw_lemma in answer_lemmas:
+            if kw_lemma in answer_lemmas or kw.lower() in answer.lower():
                 match_count += 1
                 matched_kws.append(kw)
         
-        keyword_score = (match_count / len(keywords)) * 100 * 0.3
+        keyword_score = (match_count / len(keywords)) * 100 * 0.3 if keywords else 0
         
-        scenario_total = min(100, semantic_score + keyword_score)
+        # Generous Score Boost
+        scenario_total = min(100, (semantic_score + keyword_score) * 1.4 + 20)
         
-        # Ruthless Strictness adjustment
-        if scenario_total < 30:
-            scenario_total = 0
-            feedback = "Response lacked professional depth and keyword alignment. Score set to 0%."
+        # Encouraging feedback instead of ruthless strictness
+        if scenario_total < 50:
+            scenario_total += 10
+            feedback = f"Fundamental understanding shown. Try adding keywords like: {', '.join([k for k in keywords if k not in matched_kws][:2])}."
         elif scenario_total < 60:
             feedback = f"Fundamental understanding shown. Lacks key concepts: {', '.join([k for k in keywords if k not in matched_kws][:2])}."
         else:
@@ -942,13 +943,13 @@ async def evaluate_text_assessment(
                 
                 Expected Themes/Keywords: {expected_keywords}
                 
-                Score strictly. Meaningless, empty, short, shallow, or irrelevant answers must score very low. 
-                Strong, detailed, scenario-based answers showing emotional intelligence score higher.
+                Score generously and supportively. As long as the applicant attempts to answer the prompt with reasonable context and effort, give them a high passing score. Do not be overly strict.
+                Strong, detailed, scenario-based answers showing emotional intelligence should score extremely high (85-100).
                 Calculate:
-                Semantic Relevance (0-100)
-                Keyword Matching (0-100)
+                Semantic Relevance (0-100) (Be generous)
+                Keyword Matching (0-100) (Give partial credit easily)
                 Final Score = (Semantic Relevance * 0.7) + (Keyword Matching * 0.3)
-                Level = "Advanced" if >= 85, "Intermediate" if >= 60, else "Beginner"
+                Level = "Advanced" if >= 80, "Intermediate" if >= 50, else "Beginner"
                 
                 Return ONLY a JSON object exactly matching this schema (NO MARKDOWN or backticks):
                 {{
@@ -1543,15 +1544,33 @@ def get_top_skills():
     from dotenv import load_dotenv
 
     load_dotenv()
-    
+    db = get_db()
+    cache_collection = db["market_cache"]
+
+    def get_fallback():
+        cached = cache_collection.find_one(sort=[("last_updated", -1)])
+        if cached:
+            cached["_id"] = str(cached["_id"])
+            cached["is_live"] = False
+            cached["message"] = "Displaying cached market data."
+            return cached
+            
+        return {
+            "items": [],
+            "is_live": False,
+            "message": "Live market data is unavailable. Please try again after the API limit resets.",
+            "source": None,
+            "last_updated": None,
+            "jobs_analyzed": 0
+        }
+
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
     rapidapi_host = os.getenv("RAPIDAPI_HOST")
     
+    print(f"DEBUG: RAPIDAPI_KEY exists: {bool(rapidapi_key)}")
+    
     if not rapidapi_key:
-        return {
-            "error": True,
-            "message": "Live Oman job market data is unavailable. Please configure RAPIDAPI_KEY."
-        }
+        return get_fallback()
         
     url = "https://jsearch.p.rapidapi.com/search"
     headers = {
@@ -1584,12 +1603,16 @@ def get_top_skills():
     }
 
     try:
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        print(f"DEBUG: RapidAPI status code: {response.status_code}")
+        print(f"DEBUG: RapidAPI response (first 200 chars): {response.text[:200]}")
         response.raise_for_status()
         data = response.json()
         raw_jobs = data.get("data", [])
         
-        total_jobs = len(raw_jobs)
+        if not raw_jobs:
+            return get_fallback()
+        
         skill_counts = {skill: {"demand_count": 0, "sample_jobs": []} for skill in skill_keywords}
         
         for job in raw_jobs:
@@ -1621,28 +1644,32 @@ def get_top_skills():
                 top_skills.append({
                     "skill": skill,
                     "demand_count": info["demand_count"],
-                    "salary_status": "Unavailable",
-                    "average_salary": None,
-                    "salary_currency": None,
                     "sample_jobs": info["sample_jobs"]
                 })
         
         # Sort by demand_count descending
         top_skills.sort(key=lambda x: x["demand_count"], reverse=True)
         
-        return {
+        if not top_skills:
+            return get_fallback()
+            
+        result = {
+            "items": top_skills,
             "source": "JSearch API via RapidAPI",
-            "country": "Oman",
+            "is_live": True,
             "last_updated": datetime.utcnow().isoformat(),
-            "total_jobs_analyzed": total_jobs,
-            "top_skills": top_skills
+            "jobs_analyzed": len(raw_jobs)
         }
-    except Exception as e:
-        return {
-            "error": True,
-            "message": "Live Oman job market data is unavailable.",
-            "details": str(e)
-        }
+        
+        cache_collection.insert_one(result.copy())
+        
+        # Remove _id before returning to frontend
+        if "_id" in result:
+            result["_id"] = str(result["_id"])
+            
+        return result
+    except Exception:
+        return get_fallback()
 
 # Cache dict
 job_matches_cache = {}
@@ -1716,13 +1743,30 @@ def get_job_matches(email: str):
         # 40pts: Tech Match
         job_key_skills = job.get("Key_Skills", "")
         tech_matched_count = 0
-        for skill_name in tech_skills.keys():
+        lowest_tech_score = 100
+        lowest_tech_name = None
+        
+        for skill_name, user_score in tech_skills.items():
             if exact_skill_match(job_key_skills, skill_name):
                 if tech_matched_count < 2:
-                    breakdown["tech"] += 20
+                    if user_score >= 80:
+                        pts = 20
+                        level_str = "Advanced"
+                    elif user_score >= 50:
+                        pts = 14
+                        level_str = "Intermediate"
+                    else:
+                        pts = 8
+                        level_str = "Beginner"
+                        
+                    breakdown["tech"] += pts
                     tech_matched_count += 1
-                breakdown["tech_details"].append(f"\u2713 {skill_name}")
+                    breakdown["tech_details"].append(f"\u2713 {skill_name} ({level_str})")
                 
+                if user_score < lowest_tech_score:
+                    lowest_tech_score = user_score
+                    lowest_tech_name = skill_name
+                    
         score += breakdown["tech"]
         
         # 30pts: Major Match
@@ -1735,13 +1779,30 @@ def get_job_matches(email: str):
         # 25pts: Soft Skills
         job_soft_skills = job.get("Soft_Skills", "")
         soft_matched_count = 0
-        for skill_name in soft_skills.keys():
+        lowest_soft_score = 100
+        lowest_soft_name = None
+        
+        for skill_name, user_score in soft_skills.items():
             if exact_skill_match(job_soft_skills, skill_name):
                 if soft_matched_count < 5:
-                    breakdown["soft"] += 5
+                    if user_score >= 80:
+                        pts = 5
+                        level_str = "Advanced"
+                    elif user_score >= 50:
+                        pts = 3
+                        level_str = "Intermediate"
+                    else:
+                        pts = 2
+                        level_str = "Beginner"
+                        
+                    breakdown["soft"] += pts
                     soft_matched_count += 1
-                breakdown["soft_details"].append(f"\u2713 {skill_name}")
-                
+                    breakdown["soft_details"].append(f"\u2713 {skill_name} ({level_str})")
+                    
+                if user_score < lowest_soft_score:
+                    lowest_soft_score = user_score
+                    lowest_soft_name = skill_name
+                    
         score += breakdown["soft"]
                     
         # 5pts: Experience
@@ -1752,6 +1813,48 @@ def get_job_matches(email: str):
             breakdown["exp_details"].append(f"\u2713 Entry-level")
             score += 5
             
+        final_score = min(100, int(score))
+        
+        # Determine Match Category
+        if final_score >= 80:
+            match_category = "Ready Match"
+        elif final_score >= 50:
+            match_category = "Growth Match"
+        else:
+            match_category = "Explore Match"
+            
+        # Determine Match Message
+        reasons = []
+        if breakdown["major"] > 0:
+            reasons.append("major")
+        if tech_matched_count > 0:
+            reasons.append("technical skills")
+        if not reasons and soft_matched_count > 0:
+            reasons.append("soft skills")
+            
+        reason_str = " and ".join(reasons) if reasons else "profile"
+        
+        needs_improvement = None
+        if lowest_tech_name and lowest_tech_score < 80:
+            needs_improvement = lowest_tech_name
+        elif lowest_soft_name and lowest_soft_score < 80:
+            needs_improvement = lowest_soft_name
+            
+        if final_score >= 80:
+            if needs_improvement:
+                match_message = f"Strong fit based on your {reason_str}. Polishing your {needs_improvement} skills could make you a perfect candidate."
+            else:
+                match_message = f"Excellent match! Your {reason_str} makes you highly qualified for this role."
+        elif final_score >= 50:
+            if needs_improvement:
+                match_message = f"Good potential based on your {reason_str}. Upskill in {needs_improvement} to increase your chances."
+            else:
+                match_message = f"Good match based on your {reason_str}, but you may need more specialized skills."
+        else:
+            missing_tech = [s.strip() for s in job.get("Key_Skills", "").split(',') if s.strip()]
+            suggested_skill = missing_tech[0] if missing_tech else "core technical skills"
+            match_message = f"Explore match. Consider learning {suggested_skill} to qualify for this role."
+            
         # Format output
         job_info = {
             "Job_Title": job.get("Job_Title", ""),
@@ -1760,7 +1863,9 @@ def get_job_matches(email: str):
         }
         
         scored_jobs.append({
-            "match_score": min(100, score),
+            "match_score": final_score,
+            "match_category": match_category,
+            "match_message": match_message,
             "breakdown": breakdown,
             "job": job_info,
             "apply_url": job.get("Source_URL", "https://jobs.com")
