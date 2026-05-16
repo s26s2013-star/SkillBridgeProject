@@ -78,7 +78,7 @@ export const Dashboard = () => {
                 const userSkills = profileData.skills || [];
 
                 const activities = [];
-                completedAssessments.sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt)).slice(0, 3).forEach(rec => {
+                (completedAssessments || []).sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt)).slice(0, 3).forEach(rec => {
                     activities.push({
                         id: rec._id,
                         type: 'assessment',
@@ -104,7 +104,7 @@ export const Dashboard = () => {
                         icon: 'shield'
                     });
                 }
-                setRecentActivity(activities.slice(0, 3));
+                setRecentActivity((activities || []).slice(0, 3));
 
                 setStats({
                     totalSkills: userSkills.length,
@@ -124,6 +124,7 @@ export const Dashboard = () => {
                 const res = await fetch(`${API_BASE_URL}/api/market/top-skills`);
                 if (!res.ok) throw new Error("API failed");
                 const data = await res.json();
+                console.log("market data:", data);
                 setMarketData(data);
             } catch (err) {
                 setMarketError(true);
@@ -143,7 +144,7 @@ export const Dashboard = () => {
         navigate('/login');
     };
 
-    const maxDemand = marketData?.top_skills?.[0]?.demand_count || 1;
+    const maxDemand = marketData?.items?.[0]?.demand_count || 1;
 
     return (
         <DashboardLayout user={user} onLogout={handleLogout}>
@@ -151,12 +152,17 @@ export const Dashboard = () => {
                 {/* PAGE HEADER */}
                 <header className="page-header">
                     <div className="header-greeting">
-                        <h2>Good morning, {user.name?.split(' ')[0] || 'Nusayba'}! 👋</h2>
+                        <h2>Welcome back, {user.name?.split(' ')[0] || 'Nusayba'}</h2>
                         <p>Track your skills, grow your expertise and unlock better opportunities.</p>
                     </div>
                     <div className="header-tools">
-                        <button className="tool-btn"><Bell size={20} /></button>
-                        <div className="user-avatar-mini">{user.name?.charAt(0) || 'N'}</div>
+                        <div 
+                            className="user-avatar-mini" 
+                            onClick={() => navigate('/profile')} 
+                            style={{ cursor: 'pointer' }}
+                        >
+                            {user.name?.charAt(0) || 'N'}
+                        </div>
                     </div>
                 </header>
 
@@ -236,19 +242,28 @@ export const Dashboard = () => {
                                     <h3>Top In-Demand Skills in Oman</h3>
                                     <p>Live market insights from job postings</p>
                                 </div>
-                                <div className="market-badge">
-                                    <span className="dot"></span> Live Data
+                                <div className="market-badge" style={{ background: marketData?.is_live ? 'rgba(111,179,167,0.15)' : 'rgba(239,68,68,0.1)', color: marketData?.is_live ? '#2E6F7E' : '#EF4444' }}>
+                                    {marketData?.is_live ? (
+                                        <><span className="dot" style={{ background: '#6FB3A7' }}></span> Live Data</>
+                                    ) : (
+                                        <><span className="dot" style={{ background: '#EF4444' }}></span> Cached Data</>
+                                    )}
                                 </div>
                             </div>
 
                             <div className="market-content">
                                 <div className="skills-list-area">
+                                    {marketData?.message && !marketData?.is_live && (
+                                        <div style={{ color: '#EF4444', marginBottom: '1rem', fontSize: '0.9rem', padding: '10px', background: 'rgba(239,68,68,0.05)', borderRadius: '8px' }}>
+                                            {marketData.message}
+                                        </div>
+                                    )}
                                     {marketLoading ? (
                                         <div className="loading-market">Loading insights...</div>
-                                    ) : marketError || !marketData ? (
+                                    ) : marketError || !marketData || !marketData.items || marketData.items.length === 0 ? (
                                         <div className="error-market">Data currently unavailable</div>
                                     ) : (
-                                        marketData.top_skills.slice(0, 8).map((item, i) => {
+                                        marketData.items.slice(0, 8).map((item, i) => {
                                             const pct = Math.round((item.demand_count / maxDemand) * 60) + 10;
                                             return (
                                                 <div key={item.skill} className="skill-row">
@@ -281,7 +296,7 @@ export const Dashboard = () => {
                                             <div className="donut-segment s3"></div>
                                             <div className="donut-segment s4"></div>
                                             <div className="donut-center">
-                                                <span className="num">{marketData?.total_jobs_analyzed || 148}</span>
+                                                <span className="num">{marketData?.jobs_analyzed || 0}</span>
                                                 <span className="txt">Jobs<br />Analyzed</span>
                                             </div>
                                         </div>
@@ -291,7 +306,7 @@ export const Dashboard = () => {
                                         <div className="updated-text">
                                             <span className="lbl">Last Updated</span>
                                             <span className="val">
-                                                {marketData ? new Date(marketData.last_updated).toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'April 25, 2026'} • 07:37 AM
+                                                {marketData?.last_updated ? new Date(marketData.last_updated).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
                                             </span>
                                         </div>
                                     </div>

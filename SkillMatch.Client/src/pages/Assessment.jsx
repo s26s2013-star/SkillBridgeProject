@@ -1356,8 +1356,8 @@ export const Assessment = () => {
                                                 {skill.category !== 'Soft' && (
                                                     <Button
                                                         variant="outline"
-                                                        style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem', opacity: 0.6, cursor: 'not-allowed' }}
-                                                        disabled
+                                                        style={{ flex: 1, fontSize: '0.8125rem', padding: '0.5rem' }}
+                                                        onClick={() => navigate('/matches')}
                                                     >
                                                         Show Matching
                                                     </Button>
@@ -1421,8 +1421,13 @@ export const Assessment = () => {
                                 <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', alignItems: 'center' }}>
                                     {!skillDetails?.isSoft && activeSkillData.category !== 'Soft' && (
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
-                                            <Button className="btn-primary" disabled style={{ padding: '0.75rem 2rem', opacity: 0.6, cursor: 'not-allowed' }}>Show Matching</Button>
-                                            <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>Coming soon</span>
+                                            <Button 
+                                                className="btn-primary" 
+                                                style={{ padding: '0.75rem 2rem' }}
+                                                onClick={() => navigate('/matches')}
+                                            >
+                                                Show Matching
+                                            </Button>
                                         </div>
                                     )}
                                     {isCompleted && (
