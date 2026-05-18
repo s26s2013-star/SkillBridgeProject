@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
 import { API_BASE_URL } from '../config/api';
@@ -31,45 +31,27 @@ import {
     LogOut,
     FileText,
     BarChart3,
-    Shield,
-    Building,
-    MapPin,
-    Star
+    Shield
 } from 'lucide-react';
-
-const MOCK_STATS = {
-    totalJobs: 1245,
-    activeCompanies: 84,
-    studentsAssessed: 3420,
-    averageMatchScore: 82
-};
-
-const MOCK_TOP_SKILLS = [
-    { skill: "Backend Development (APIs)", demand: 450, growth: "+24%", jobs: "Backend Engineer, API Developer" },
-    { skill: "Data Analysis (Python)", demand: 380, growth: "+18%", jobs: "Data Analyst, BI Consultant" },
-    { skill: "Machine Learning", demand: 310, growth: "+32%", jobs: "ML Engineer, AI Researcher" },
-    { skill: "Network Security", demand: 290, growth: "+15%", jobs: "Security Analyst, Pen Tester" },
-    { skill: "Routing & Switching", demand: 210, growth: "+8%", jobs: "Network Engineer, IT Admin" },
-    { skill: "Testing & Debugging", demand: 180, growth: "+12%", jobs: "QA Engineer, SDET" }
-];
-
-const MOCK_RECOMMENDED_JOBS = [
-    { id: 1, title: "Software Engineer", company: "Omantel", location: "Muscat, Oman", salary: "OMR 1,200 - 1,500", match: 92, type: "Full-time" },
-    { id: 2, title: "Data Analyst", company: "Bank Muscat", location: "Muscat, Oman", salary: "OMR 900 - 1,200", match: 88, type: "Full-time" },
-    { id: 3, title: "Backend Developer", company: "Oman Data Park", location: "KOM, Muscat", salary: "OMR 1,000 - 1,400", match: 85, type: "Hybrid" }
-];
-
-const MOCK_RECENT_ACTIVITY = [
-    { id: 1, type: "company", text: "Omantel posted a new Software Engineer role.", time: "2 hours ago", icon: 'building' },
-    { id: 2, type: "assessment", text: "You scored 90% in Python Data Analysis.", time: "5 hours ago", icon: 'check' },
-    { id: 3, type: "match", text: "New match! Bank Muscat viewed your profile.", time: "1 day ago", icon: 'users' }
-];
 
 export const Dashboard = () => {
     const navigate = useNavigate();
     const user = authService.getCurrentUser() || {};
 
+    const [dashboardSkills, setDashboardSkills] = useState([]);
+    const [stats, setStats] = useState({
+        totalSkills: 0,
+        assessmentsCompleted: 0,
+        matchingScore: 0,
+        availableJobs: 0
+    });
+    const [recentActivity, setRecentActivity] = useState([]);
     const [profileCompletion, setProfileCompletion] = useState(50);
+
+    // Market Data State
+    const [marketData, setMarketData] = useState(null);
+    const [marketLoading, setMarketLoading] = useState(true);
+    const [marketError, setMarketError] = useState(false);
 
     useEffect(() => {
         const fetchUserData = async () => {
@@ -77,6 +59,10 @@ export const Dashboard = () => {
                 const profileResponse = await fetch(`${API_BASE_URL}/api/user/profile?email=${encodeURIComponent(user.email)}`);
                 if (!profileResponse.ok) return;
                 const profileData = await profileResponse.json();
+
+                const userId = user.id || user.email;
+                const assessmentResponse = await fetch(`${API_BASE_URL}/api/assessment/results?userId=${encodeURIComponent(userId)}`);
+                const completedAssessments = assessmentResponse.ok ? await assessmentResponse.json() : [];
 
                 const fields = [
                     profileData.name && profileData.name !== 'User',
@@ -88,13 +74,68 @@ export const Dashboard = () => {
                 ];
                 const completedFields = fields.filter(Boolean).length;
                 setProfileCompletion(Math.round((completedFields / fields.length) * 100));
+
+                const userSkills = profileData.skills || [];
+
+                const activities = [];
+                (completedAssessments || []).sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt)).slice(0, 3).forEach(rec => {
+                    activities.push({
+                        id: rec._id,
+                        type: 'assessment',
+                        text: `Completed ${rec.skillId} Assessment`,
+                        time: rec.completedAt ? new Date(rec.completedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Recently',
+                        icon: 'check'
+                    });
+                });
+
+                if (activities.length < 3) {
+                    activities.push({
+                        id: 'verification-1',
+                        type: 'verification',
+                        text: 'Verified Backend Development Skill',
+                        time: 'Recently',
+                        icon: 'shield'
+                    });
+                    activities.push({
+                        id: 'verification-2',
+                        type: 'verification',
+                        text: 'Verified Scalability Concepts Skill',
+                        time: 'Recently',
+                        icon: 'shield'
+                    });
+                }
+                setRecentActivity((activities || []).slice(0, 3));
+
+                setStats({
+                    totalSkills: userSkills.length,
+                    assessmentsCompleted: completedAssessments.length,
+                    availableJobs: 0,
+                    matchingScore: 17
+                });
+
             } catch (error) {
                 console.error("Dashboard data sync failed:", error);
             }
         };
 
+        const fetchMarketData = async () => {
+            try {
+                setMarketLoading(true);
+                const res = await fetch(`${API_BASE_URL}/api/market/top-skills`);
+                if (!res.ok) throw new Error("API failed");
+                const data = await res.json();
+                console.log("market data:", data);
+                setMarketData(data);
+            } catch (err) {
+                setMarketError(true);
+            } finally {
+                setMarketLoading(false);
+            }
+        };
+
         if (user.email) {
             fetchUserData();
+            fetchMarketData();
         }
     }, [user?.email]);
 
@@ -102,6 +143,8 @@ export const Dashboard = () => {
         authService.logout();
         navigate('/login');
     };
+
+    const maxDemand = marketData?.items?.[0]?.demand_count || 1;
 
     return (
         <DashboardLayout user={user} onLogout={handleLogout}>
@@ -159,104 +202,115 @@ export const Dashboard = () => {
                         {/* STATS ROW */}
                         <div className="stats-row">
                             <div className="stat-card">
-                                <div className="stat-icon"><Briefcase size={24} /></div>
+                                <div className="stat-icon"><Award size={24} /></div>
                                 <div className="stat-info">
-                                    <span className="stat-val">{MOCK_STATS.totalJobs.toLocaleString()}</span>
-                                    <span className="stat-label">Total Jobs</span>
-                                    <span className="stat-hint">+12% this week</span>
-                                </div>
-                            </div>
-                            <div className="stat-card">
-                                <div className="stat-icon"><Building size={24} /></div>
-                                <div className="stat-info">
-                                    <span className="stat-val">{MOCK_STATS.activeCompanies}</span>
-                                    <span className="stat-label">Active Companies</span>
-                                    <span className="stat-hint">Hiring now</span>
-                                </div>
-                            </div>
-                            <div className="stat-card">
-                                <div className="stat-icon"><Users size={24} /></div>
-                                <div className="stat-info">
-                                    <span className="stat-val">{MOCK_STATS.studentsAssessed.toLocaleString()}</span>
-                                    <span className="stat-label">Students Assessed</span>
-                                    <span className="stat-hint">In Oman</span>
+                                    <span className="stat-val">{stats.totalSkills}</span>
+                                    <span className="stat-label">Total Skills Added</span>
+                                    <span className="stat-hint">Keep building!</span>
                                 </div>
                             </div>
                             <div className="stat-card">
                                 <div className="stat-icon"><Target size={24} /></div>
                                 <div className="stat-info">
-                                    <span className="stat-val">{MOCK_STATS.averageMatchScore}%</span>
-                                    <span className="stat-label">Avg. Match Score</span>
-                                    <span className="stat-hint">Platform wide</span>
+                                    <span className="stat-val">{stats.assessmentsCompleted}</span>
+                                    <span className="stat-label">Assessments Completed</span>
+                                    <span className="stat-hint">Keep going!</span>
+                                </div>
+                            </div>
+                            <div className="stat-card">
+                                <div className="stat-icon"><Activity size={24} /></div>
+                                <div className="stat-info">
+                                    <span className="stat-val">{stats.matchingScore}%</span>
+                                    <span className="stat-label">Matching Score</span>
+                                    <span className="stat-hint">Good start!</span>
+                                </div>
+                            </div>
+                            <div className="stat-card">
+                                <div className="stat-icon"><Briefcase size={24} /></div>
+                                <div className="stat-info">
+                                    <span className="stat-val">{stats.availableJobs}</span>
+                                    <span className="stat-label">Job Matches Available</span>
+                                    <span className="stat-hint">Complete more skills</span>
                                 </div>
                             </div>
                         </div>
 
-                        {/* TOP SKILLS IN DEMAND */}
+                        {/* MARKET INSIGHTS CARD */}
                         <div className="card market-card-full">
                             <div className="market-card-header">
                                 <div className="title-area">
-                                    <h3>Top Skills in Demand</h3>
-                                    <p>Live market insights from job postings in Oman</p>
+                                    <h3>Top In-Demand Skills in Oman</h3>
+                                    <p>Live market insights from job postings</p>
                                 </div>
-                                <div className="market-badge">
-                                    <span className="dot"></span> Live Data
+                                <div className="market-badge" style={{ background: marketData?.is_live ? 'rgba(111,179,167,0.15)' : 'rgba(239,68,68,0.1)', color: marketData?.is_live ? '#2E6F7E' : '#EF4444' }}>
+                                    {marketData?.is_live ? (
+                                        <><span className="dot" style={{ background: '#6FB3A7' }}></span> Live Data</>
+                                    ) : (
+                                        <><span className="dot" style={{ background: '#EF4444' }}></span> Cached Data</>
+                                    )}
                                 </div>
                             </div>
 
-                            <div className="market-content-grid">
-                                {MOCK_TOP_SKILLS.map((item, i) => (
-                                    <div key={item.skill} className="top-skill-card">
-                                        <div className="ts-header">
-                                            <div className="ts-icon">
-                                                <TrendingUp size={16} />
-                                            </div>
-                                            <div className="ts-growth">{item.growth}</div>
+                            <div className="market-content">
+                                <div className="skills-list-area">
+                                    {marketData?.message && !marketData?.is_live && (
+                                        <div style={{ color: '#EF4444', marginBottom: '1rem', fontSize: '0.9rem', padding: '10px', background: 'rgba(239,68,68,0.05)', borderRadius: '8px' }}>
+                                            {marketData.message}
                                         </div>
-                                        <h4 className="ts-title">{item.skill}</h4>
-                                        <p className="ts-jobs">{item.jobs}</p>
-                                        <div className="ts-demand">
-                                            <span className="ts-dval">{item.demand}</span> open roles
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* RECOMMENDED JOBS */}
-                        <div className="recommended-jobs-section">
-                            <div className="section-header">
-                                <div>
-                                    <h3>Recommended Jobs</h3>
-                                    <p>Based on your verified skills</p>
+                                    )}
+                                    {marketLoading ? (
+                                        <div className="loading-market">Loading insights...</div>
+                                    ) : marketError || !marketData || !marketData.items || marketData.items.length === 0 ? (
+                                        <div className="error-market">Data currently unavailable</div>
+                                    ) : (
+                                        marketData.items.slice(0, 8).map((item, i) => {
+                                            const pct = Math.round((item.demand_count / maxDemand) * 60) + 10;
+                                            return (
+                                                <div key={item.skill} className="skill-row">
+                                                    <div className="skill-info">
+                                                        <div className="skill-icon">
+                                                            {i === 0 ? <TrendingUp size={14} /> : <Zap size={14} />}
+                                                        </div>
+                                                        <span className="name">{item.skill}</span>
+                                                    </div>
+                                                    <div className="bar-wrapper">
+                                                        <div className="bar-bg">
+                                                            <div className="bar-fill" style={{ width: `${pct}%` }}></div>
+                                                        </div>
+                                                        <span className="pct-label">{pct}%</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                    <button className="view-report-btn">
+                                        <BarChart3 size={16} /> View Full Report
+                                    </button>
                                 </div>
-                                <Button variant="outline" className="view-all-btn" onClick={() => navigate('/jobs')}>
-                                    View All <ArrowRight size={14} style={{ marginLeft: '4px' }}/>
-                                </Button>
-                            </div>
-                            <div className="jobs-grid">
-                                {MOCK_RECOMMENDED_JOBS.map(job => (
-                                    <div key={job.id} className="job-card-mini">
-                                        <div className="jc-header">
-                                            <div className="jc-company-logo">
-                                                <Building size={20} />
+
+                                <div className="jobs-analyzed-area">
+                                    <div className="donut-chart-container">
+                                        <div className="donut-chart">
+                                            <div className="donut-segment s1"></div>
+                                            <div className="donut-segment s2"></div>
+                                            <div className="donut-segment s3"></div>
+                                            <div className="donut-segment s4"></div>
+                                            <div className="donut-center">
+                                                <span className="num">{marketData?.jobs_analyzed || 0}</span>
+                                                <span className="txt">Jobs<br />Analyzed</span>
                                             </div>
-                                            <div className="jc-match-badge">
-                                                <Star size={12} fill="currentColor" /> {job.match}% Match
-                                            </div>
-                                        </div>
-                                        <h4 className="jc-title">{job.title}</h4>
-                                        <p className="jc-company">{job.company}</p>
-                                        <div className="jc-details">
-                                            <span><MapPin size={12}/> {job.location}</span>
-                                            <span><Briefcase size={12}/> {job.type}</span>
-                                        </div>
-                                        <div className="jc-footer">
-                                            <span className="jc-salary">{job.salary}</span>
-                                            <button className="jc-apply-btn">Apply Now</button>
                                         </div>
                                     </div>
-                                ))}
+                                    <div className="last-updated-box">
+                                        <Clock size={20} />
+                                        <div className="updated-text">
+                                            <span className="lbl">Last Updated</span>
+                                            <span className="val">
+                                                {marketData?.last_updated ? new Date(marketData.last_updated).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -307,10 +361,10 @@ export const Dashboard = () => {
                         <div className="card side-card recent-act">
                             <h4>Recent Activity</h4>
                             <div className="activity-stack">
-                                {MOCK_RECENT_ACTIVITY.map(act => (
+                                {recentActivity.map(act => (
                                     <div key={act.id} className="act-item">
                                         <div className="act-icon">
-                                            {act.icon === 'building' ? <Building size={16} /> : act.icon === 'check' ? <CheckCircle2 size={16} /> : <Users size={16} />}
+                                            {act.type === 'assessment' ? <CheckCircle2 size={16} /> : <Shield size={16} />}
                                         </div>
                                         <div className="act-content">
                                             <p>{act.text}</p>
@@ -483,6 +537,11 @@ export const Dashboard = () => {
                     align-items: center;
                     z-index: 1;
                 }
+                .hero-img {
+                    width: 280px;
+                    max-height: 200px;
+                    object-fit: contain;
+                }
 
                 /* STATS */
                 .stats-row {
@@ -528,7 +587,7 @@ export const Dashboard = () => {
                     display: flex;
                     justify-content: space-between;
                     align-items: flex-start;
-                    margin-bottom: 2rem;
+                    margin-bottom: 2.5rem;
                 }
                 .title-area h3 { font-size: 1.25rem; font-weight: 800; margin: 0; color: #1F2D3D; }
                 .title-area p { margin: 4px 0 0 0; color: #6B7C85; font-size: 0.9rem; }
@@ -545,193 +604,128 @@ export const Dashboard = () => {
                 }
                 .market-badge .dot { width: 8px; height: 8px; background: #6FB3A7; border-radius: 50%; }
 
-                /* NEW TOP SKILLS GRID */
-                .market-content-grid {
+                .market-content {
                     display: grid;
-                    grid-template-columns: repeat(3, 1fr);
-                    gap: 1.25rem;
-                }
-                .top-skill-card {
-                    background: #F5F9FA;
-                    border-radius: 16px;
-                    padding: 1.25rem;
-                    border: 1px solid #E5EEF0;
-                    transition: transform 0.2s, box-shadow 0.2s;
-                }
-                .top-skill-card:hover {
-                    transform: translateY(-2px);
-                    box-shadow: 0 6px 12px rgba(46, 111, 126, 0.1);
-                    border-color: rgba(111,179,167,0.4);
-                }
-                .ts-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 0.75rem;
-                }
-                .ts-icon {
-                    width: 32px;
-                    height: 32px;
-                    background: white;
-                    border-radius: 8px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    color: #2E6F7E;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-                }
-                .ts-growth {
-                    font-size: 0.8rem;
-                    font-weight: 700;
-                    color: #059669;
-                    background: #D1FAE5;
-                    padding: 4px 8px;
-                    border-radius: 100px;
-                }
-                .ts-title {
-                    font-size: 1rem;
-                    font-weight: 700;
-                    color: #1F2D3D;
-                    margin: 0 0 4px 0;
-                }
-                .ts-jobs {
-                    font-size: 0.8rem;
-                    color: #6B7C85;
-                    margin: 0 0 1rem 0;
-                    line-height: 1.4;
-                }
-                .ts-demand {
-                    font-size: 0.85rem;
-                    color: #6B7C85;
-                    font-weight: 500;
-                    border-top: 1px solid rgba(0,0,0,0.05);
-                    padding-top: 0.75rem;
-                }
-                .ts-dval {
-                    font-weight: 800;
-                    color: #2E6F7E;
+                    grid-template-columns: 1fr 280px;
+                    gap: 3rem;
                 }
 
-                /* RECOMMENDED JOBS */
-                .recommended-jobs-section {
-                    margin-top: 2rem;
-                }
-                .section-header {
+                .skill-row {
                     display: flex;
-                    justify-content: space-between;
                     align-items: center;
-                    margin-bottom: 1.25rem;
+                    gap: 2rem;
+                    margin-bottom: 1.2rem;
                 }
-                .section-header h3 {
-                    font-size: 1.25rem;
-                    font-weight: 800;
-                    color: #1F2D3D;
-                    margin: 0;
-                }
-                .section-header p {
-                    margin: 4px 0 0 0;
-                    color: #6B7C85;
-                    font-size: 0.9rem;
-                }
-                .view-all-btn {
-                    font-size: 0.85rem !important;
-                    padding: 0.5rem 1rem !important;
-                }
-                .jobs-grid {
-                    display: grid;
-                    grid-template-columns: repeat(3, 1fr);
-                    gap: 1.25rem;
-                }
-                .job-card-mini {
-                    background: white;
-                    border-radius: 20px;
-                    padding: 1.5rem;
-                    border: 1px solid #E5EEF0;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-                    transition: all 0.2s;
-                }
-                .job-card-mini:hover {
-                    box-shadow: 0 8px 16px rgba(46, 111, 126, 0.08);
-                    border-color: #6FB3A7;
-                }
-                .jc-header {
+                .skill-info {
                     display: flex;
-                    justify-content: space-between;
-                    align-items: flex-start;
-                    margin-bottom: 1rem;
+                    align-items: center;
+                    gap: 12px;
+                    width: 140px;
                 }
-                .jc-company-logo {
-                    width: 44px;
-                    height: 44px;
-                    border-radius: 12px;
-                    background: rgba(111,179,167,0.1);
-                    color: #2E6F7E;
+                .skill-info .skill-icon {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 6px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
+                    background: rgba(111,179,167,0.15);
+                    color: #2E6F7E;
                 }
-                .jc-match-badge {
+                .skill-info .name { font-size: 0.9rem; font-weight: 600; color: #1F2D3D; }
+                
+                .bar-wrapper {
+                    flex: 1;
                     display: flex;
                     align-items: center;
-                    gap: 4px;
-                    background: #FEF3C7;
-                    color: #D97706;
-                    padding: 4px 8px;
+                    gap: 1rem;
+                }
+                .bar-bg {
+                    flex: 1;
+                    height: 6px;
+                    background: rgba(111,179,167,0.15);
                     border-radius: 100px;
-                    font-size: 0.75rem;
+                    overflow: hidden;
+                }
+                .bar-fill {
+                    height: 100%;
+                    border-radius: 100px;
+                    background: #6FB3A7;
+                }
+                .pct-label {
+                    font-size: 0.85rem;
                     font-weight: 700;
+                    color: #6B7C85;
+                    width: 35px;
                 }
-                .jc-title {
-                    font-size: 1.05rem;
-                    font-weight: 800;
-                    color: #1F2D3D;
-                    margin: 0 0 4px 0;
-                }
-                .jc-company {
-                    font-size: 0.9rem;
-                    color: #2E6F7E;
-                    font-weight: 600;
-                    margin: 0 0 1rem 0;
-                }
-                .jc-details {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 6px;
-                    margin-bottom: 1.25rem;
-                }
-                .jc-details span {
+
+                .view-report-btn {
+                    margin-top: 1.5rem;
+                    background: white;
+                    border: 1px solid #E5EEF0;
+                    padding: 10px 18px;
+                    border-radius: 10px;
+                    font-size: 0.85rem;
+                    font-weight: 700;
+                    color: #6B7C85;
                     display: flex;
                     align-items: center;
                     gap: 8px;
-                    font-size: 0.85rem;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .view-report-btn:hover { background: #F5F9FA; color: #2E6F7E; }
+
+                /* DONUT CHART */
+                .jobs-analyzed-area {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    gap: 2rem;
+                }
+                .donut-chart {
+                    position: relative;
+                    width: 180px;
+                    height: 180px;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                .donut-segment {
+                    position: absolute;
+                    width: 100%;
+                    height: 100%;
+                    border-radius: 50%;
+                    border: 20px solid transparent;
+                }
+                .s1 { border-top-color: #2E6F7E; transform: rotate(45deg); }
+                .s2 { border-right-color: #4C8D9B; transform: rotate(45deg); }
+                .s3 { border-bottom-color: #6FB3A7; transform: rotate(45deg); }
+                .s4 { border-left-color: rgba(111,179,167,0.4); transform: rotate(45deg); }
+                
+                .donut-center {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    text-align: center;
+                }
+                .donut-center .num { font-size: 2.25rem; font-weight: 800; color: #1F2D3D; line-height: 1; }
+                .donut-center .txt { font-size: 0.8rem; color: #6B7C85; font-weight: 600; margin-top: 4px; }
+
+                .last-updated-box {
+                    background: #F5F9FA;
+                    border-radius: 12px;
+                    padding: 12px 20px;
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    width: 100%;
                     color: #6B7C85;
                 }
-                .jc-footer {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    border-top: 1px solid #E5EEF0;
-                    padding-top: 1rem;
-                }
-                .jc-salary {
-                    font-size: 0.85rem;
-                    font-weight: 700;
-                    color: #1F2D3D;
-                }
-                .jc-apply-btn {
-                    background: #2E6F7E;
-                    color: white;
-                    border: none;
-                    padding: 6px 12px;
-                    border-radius: 8px;
-                    font-size: 0.8rem;
-                    font-weight: 600;
-                    cursor: pointer;
-                    transition: background 0.2s;
-                }
-                .jc-apply-btn:hover {
-                    background: #255a66;
-                }
+                .updated-text { display: flex; flex-direction: column; }
+                .updated-text .lbl { font-size: 0.75rem; color: #6B7C85; font-weight: 700; text-transform: uppercase; }
+                .updated-text .val { font-size: 0.8rem; color: #1F2D3D; font-weight: 600; }
 
                 /* SIDEBAR CARDS */
                 .side-card {
@@ -825,10 +819,9 @@ export const Dashboard = () => {
                     justify-content: center;
                     background: rgba(111,179,167,0.15);
                     color: #2E6F7E;
-                    flex-shrink: 0;
                 }
-                .act-content p { font-size: 0.85rem; font-weight: 600; color: #1F2D3D; margin: 0; line-height: 1.3; }
-                .act-content span { font-size: 0.75rem; color: #6B7C85; margin-top: 4px; display: block; }
+                .act-content p { font-size: 0.85rem; font-weight: 600; color: #1F2D3D; margin: 0; }
+                .act-content span { font-size: 0.75rem; color: #6B7C85; margin-top: 2px; display: block; }
                 .view-all-link {
                     margin-top: 2rem;
                     background: none;
@@ -850,12 +843,8 @@ export const Dashboard = () => {
                 @media (max-width: 768px) {
                     .stats-row { grid-template-columns: repeat(2, 1fr); }
                     .hero-banner { flex-direction: column; text-align: center; gap: 2rem; padding: 2rem; }
-                    .market-content-grid { grid-template-columns: 1fr; }
-                    .jobs-grid { grid-template-columns: 1fr; }
                 }
             `}</style>
         </DashboardLayout>
     );
 };
-
-export default Dashboard;
