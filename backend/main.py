@@ -1863,18 +1863,28 @@ def get_job_matches(email: str):
             
         # Format output
         job_info = {
-            "Job_Title": job.get("Job_Title", ""),
-            "Company": job.get("Company", ""),
-            "Location": job.get("Location", "")
+            "Job_Title": job.get("Job_Title", "").strip() if job.get("Job_Title") else "",
+            "Company": job.get("Company", "").strip() if job.get("Company") else "",
+            "Location": job.get("Location", "").strip() if job.get("Location") else ""
         }
         
+        raw_url = job.get("Source_URL", "").strip() if job.get("Source_URL") else ""
+        if not (raw_url.startswith("http://") or raw_url.startswith("https://")):
+            import urllib.parse
+            job_title_clean = job_info["Job_Title"]
+            company_clean = job_info["Company"]
+            query = f"{job_title_clean} {company_clean} job Oman"
+            apply_url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}"
+        else:
+            apply_url = raw_url
+
         scored_jobs.append({
             "match_score": final_score,
             "match_category": match_category,
             "match_message": match_message,
             "breakdown": breakdown,
             "job": job_info,
-            "apply_url": job.get("Source_URL", "https://jobs.com")
+            "apply_url": apply_url
         })
         
     # 3. Return TOP 3
