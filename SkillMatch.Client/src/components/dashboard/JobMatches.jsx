@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '../../config/api';
 
 const JobMatches = ({ email }) => {
   const [loading, setLoading] = useState(true);
@@ -8,35 +9,30 @@ const JobMatches = ({ email }) => {
   useEffect(() => {
     const fetchMatches = async () => {
       try {
-        setLoading(true);
-        const profileRes = await fetch(`http://localhost:8000/api/profile-summary?email=${email}`, {
-          method: 'POST'
-        });
-        
-        if (!profileRes.ok) {
-          const errData = await profileRes.json().catch(() => ({}));
-          throw new Error(errData.detail || "Complete assessment to see job matches");
+        if (!email) {
+          setError('User email is missing. Please log in again.');
+          return;
         }
-        
-        const response = await fetch(`http://localhost:8000/api/job-matches?email=${email}`);
+
+        setLoading(true);
+
+        const response = await fetch(`${API_BASE_URL}/api/job-matches?email=${encodeURIComponent(email)}`);
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.detail || "Complete assessment to see job matches");
+          throw new Error(errData.detail || 'Complete assessment to see job matches');
         }
-        
+
         const data = await response.json();
         setJobs(data);
         setError(null);
       } catch (err) {
-        setError(err.message || "Complete assessment to see job matches");
+        setError(err.message || 'Complete assessment to see job matches');
       } finally {
         setLoading(false);
       }
     };
 
-    if (email) {
-      fetchMatches();
-    }
+    fetchMatches();
   }, [email]);
 
   if (loading) {

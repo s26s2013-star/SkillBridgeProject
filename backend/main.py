@@ -427,53 +427,6 @@ def get_skills_for_user_optimized(email: str):
         })
 
     return result
-        
-    # 2. Fetch specific fields for skills matching the major
-    query = {"major": {"$regex": f"^{major}$", "$options": "i"}}
-    skills_cursor = list(db["skills"].find(query))
-    
-    # Fallback partial match if exact match yields nothing
-    if not skills_cursor:
-        query_fallback = {"major": {"$regex": major, "$options": "i"}}
-        skills_cursor = list(db["skills"].find(query_fallback))
-        
-    # 3. Format into minimal optimized structure matching frontend requirements
-    for s in skills_cursor:
-        result["skills"].append({
-            "id": str(s["_id"]),
-            "name": s.get("skill_name", ""),
-            "type": s.get("category", "Technical"),
-            "shortDescription": s.get("beginner_criteria", ""),
-            "details": {
-                "importance": s.get("beginner_criteria", ""),
-                "intermediate": s.get("intermediate_criteria", ""),
-                "advanced": s.get("advanced_criteria", ""),
-                "components": s.get("key_components", []),
-                "assessment": s.get("assessment_description", ""),
-                "source": s.get("source", "")
-            }
-        })
-        
-    # Inject Core Soft Skills
-    core_ss_names = ["Communication", "Teamwork", "Problem Solving", "Time Management", "Adaptability"]
-    for name in core_ss_names:
-        if not any(s["name"].lower() == name.lower() for s in result["skills"]):
-            result["skills"].append({
-                "id": f"injected_{name.lower()}",
-                "name": name,
-                "type": "Soft",
-                "shortDescription": "Core professional competency evaluated via multi-scenario research bank.",
-                "details": {
-                    "importance": f"{name} is critical for professional success and team synergy.",
-                    "intermediate": "Can handle complex interpersonal scenarios and group dynamics.",
-                    "advanced": "Leads by example, mentors others, and optimizes organizational processes.",
-                    "components": ["Scenario Analysis", "Behavioral Response", "Strategic Thinking"],
-                    "assessment": "Multi-scenario text or voice evaluation based on research standards.",
-                    "source": "SkillBridge Research Bank"
-                }
-            })
-            
-    return result
 
 @app.get("/api/jobs")
 def get_jobs(industry: Optional[str] = None, category: Optional[str] = None):
@@ -602,6 +555,37 @@ def update_user_profile(profile_update: UserProfileUpdate):
     users_collection.update_one({"email": profile_update.email}, {"$set": update_data})
     
     return {"message": "Profile updated successfully"}
+
+@app.post("/api/user/extract-skills")
+async def extract_skills_from_cv(file: UploadFile = File(...)):
+    db = get_db()
+    skills_collection = db["skills"]
+
+    raw_bytes = await file.read()
+    text = None
+    for encoding in ("utf-8", "latin-1", "cp1252"):
+        try:
+            text = raw_bytes.decode(encoding)
+            break
+        except Exception:
+            continue
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Unable to read the uploaded file. Please upload a text-based resume.")
+
+    lower_text = text.lower()
+    found = []
+    seen = set()
+    for skill in skills_collection.find({}, {"skill_name": 1}):
+        name = skill.get("skill_name", "")
+        if not name:
+            continue
+        name_lower = name.lower()
+        if name_lower in lower_text and name_lower not in seen:
+            seen.add(name_lower)
+            found.append({"name": name, "level": "Beginner", "progress": 30, "status": "Not tested"})
+
+    return {"skills": found[:20]}
 
 @app.post("/api/user/assessment")
 def submit_assessment(sub: AssessmentSubmission):
@@ -1681,21 +1665,21 @@ def get_top_skills():
 job_matches_cache = {}
 import time
 
-@app.post("/api/profile-summary")
-def create_profile_summary(email: str):
+def build_profile_summary(email: str):
+    email_clean = email.strip().lower()
     db = get_db()
-    user = db["users"].find_one({"email": email})
+    user = db["users"].find_one({"email": email_clean})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
+    skills_list = user.get("skills", [])
+    if not skills_list:
+        raise HTTPException(status_code=400, detail="Complete assessment")
+
     tech_skills = {}
     soft_skills = {}
     soft_names = ["Communication", "Teamwork", "Problem Solving", "Time Management", "Adaptability"]
-    
-    skills_list = user.get("skills", [])
-    if not skills_list:
-        return {"error": True, "message": "Complete assessment"}
-        
+
     for skill in skills_list:
         name = skill.get("name") if isinstance(skill, dict) else skill
         score = skill.get("progress", 0) if isinstance(skill, dict) else 0
@@ -1703,32 +1687,37 @@ def create_profile_summary(email: str):
             soft_skills[name] = score
         else:
             tech_skills[name] = score
-            
+
     summary = {
-        "email": email,
+        "email": email_clean,
         "major": user.get("major", ""),
         "tech_skills": tech_skills,
         "soft_skills": soft_skills,
         "last_updated": datetime.utcnow().isoformat()
     }
-    
-    save_profile_summary(email, summary)
+
+    save_profile_summary(email_clean, summary)
+    return summary
+
+@app.post("/api/profile-summary")
+def create_profile_summary(email: str):
+    summary = build_profile_summary(email)
     return {"message": "Profile summary created", "summary": summary}
 
 @app.get("/api/job-matches")
 def get_job_matches(email: str):
-    # 1. Get user profile
+    # 1. Get or build user profile summary
     profile = get_user_profile(email)
     if not profile:
-        raise HTTPException(status_code=404, detail="Complete assessment")
-        
+        profile = build_profile_summary(email)
+
     # Cache Check (1 hour)
     current_time = time.time()
     if email in job_matches_cache:
         cached_time, cached_results = job_matches_cache[email]
         if current_time - cached_time < 3600:
             return cached_results
-            
+
     # 2. Calculate match_score for all 40 jobs  
     jobs = get_all_jobs()
     scored_jobs = []

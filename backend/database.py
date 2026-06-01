@@ -5,16 +5,19 @@ import pandas as pd
 import certifi
 import pymongo
 from pymongo.errors import ConnectionFailure
+from dotenv import load_dotenv
+
+load_dotenv()
 
 ca = certifi.where()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MONGO_URI = os.getenv(
-    "MONGO_URI",
-    "mongodb+srv://manaralnabhani95_db_user:B%26techp5@cluster0.wjwh5vq.mongodb.net/SkillBridgeDB?retryWrites=true&w=majority"
-)
+MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI:
+    raise ValueError("MONGO_URI is not set in the environment or .env file.")
+
 print("USING MONGO_URI:", MONGO_URI)
 
 _client = None

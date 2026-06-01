@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
+import { API_BASE_URL } from '../config/api';
 import { DashboardLayout } from '../components/dashboard/DashboardLayout';
 import { Button } from '../components/Button';
 import {
@@ -23,7 +24,7 @@ export const UpskillPlan = () => {
         setLoading(true);
         setError(null);
         try {
-            const response = await fetch(`http://127.0.0.1:8000/api/upskill-plan?email=${encodeURIComponent(user.email)}`);
+            const response = await fetch(`${API_BASE_URL}/api/upskill-plan?email=${encodeURIComponent(user.email)}`);
             const data = await response.json();
             setPlan(data.status === 'empty' ? null : data);
         } catch (err) {
@@ -37,7 +38,7 @@ export const UpskillPlan = () => {
         setGenerating(true);
         setError(null);
         try {
-            const response = await fetch('http://127.0.0.1:8000/api/upskill-plan', {
+            const response = await fetch(`${API_BASE_URL}/api/upskill-plan`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email: user.email })
