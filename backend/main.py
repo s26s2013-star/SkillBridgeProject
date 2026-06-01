@@ -806,6 +806,19 @@ async def get_quiz_questions(skill_name: str, category: str = "Technical"):
         return {"skill_name": skill_name, "questions": dummy}
         
     try:
+        prompt = f"""Generate 10 Likert-scale assessment questions for the skill '{skill_name}' ({category}).
+        
+Format as JSON array of strings. Each question should be a statement the user rates (1-5 scale):
+- Disagree strongly
+- Disagree
+- Neutral
+- Agree
+- Agree strongly
+
+Example: ["I understand the fundamentals of {skill_name}", "I can apply {skill_name} in practical scenarios"]
+
+Return ONLY valid JSON array, no markdown, no explanation."""
+        
         ai_response = call_gemini(prompt)
         if not ai_response:
              raise ValueError("All Gemini models failed to generate quiz.")
