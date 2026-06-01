@@ -14,3 +14,6 @@ python-docx
 google-api-python-client
 requests
 python-dotenv
+spacy>=3.0.0
+nltk>=3.8
+httpx
