@@ -1,7 +1,7 @@
 // Base configuration for API connection
 // You can easily update the base URL depending on your environment
 
-export const API_BASE_URL = 'https://skillbridgeproject-t80c.onrender.com';
+export const API_BASE_URL = 'https://skillbridgeproject-jqzv.onrender.com';
 
 export const endpoints = {
     auth: {
