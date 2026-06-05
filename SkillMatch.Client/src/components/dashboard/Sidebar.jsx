@@ -49,8 +49,8 @@ export const Sidebar = ({ user, onLogout }) => {
                 <div className="user-info">
                     <div className="avatar">{user?.name?.charAt(0) || 'U'}</div>
                     <div className="user-details">
-                        <span className="user-name">{user?.name || 'Student'}</span>
-                        <span className="user-role">Student</span>
+                        <span className="user-name">{user?.name || 'User'}</span>
+                        <span className="user-role">{user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : 'User'}</span>
                     </div>
                 </div>
                 <button className="logout-button" onClick={onLogout}>
